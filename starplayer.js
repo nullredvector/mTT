@@ -1480,17 +1480,23 @@ render();
         #stars-main-header { padding: 10px 12px 8px; }
         #stars-grid { padding: 10px 12px; gap: 10px; }
 
+        /* ── Hide star bubble on mobile ── */
+        #star-toggle { display: none !important; }
+
         /* ── Bottom tab bar ── */
         nav {
           position: fixed !important;
           bottom: 0 !important; top: auto !important;
           left: 0 !important; right: 0 !important;
-          width: 100% !important; height: 62px !important;
+          /* 100vw escapes any width-constrained parent container */
+          width: 100vw !important; height: 62px !important;
           flex-direction: row !important; align-items: stretch !important;
           border-top: 1px solid #2a2a2a !important; border-bottom: none !important;
           overflow-x: auto !important; overflow-y: hidden !important;
           z-index: 500 !important; padding: 0 !important;
           background: #1a1a1a !important;
+          /* Reset any margin/transform that could shift it right */
+          margin: 0 !important; transform: none !important;
         }
         /* Each tab: icon centred above label */
         nav > div {
