@@ -890,6 +890,19 @@
         if (col < cols) navigateColumn(col, dir);
       }
     });
+
+    // Swipe up → next video, swipe down → previous (mobile only)
+    let _swipeY = 0;
+    overlay.addEventListener('touchstart', e => {
+      _swipeY = e.touches[0].clientY;
+    }, { passive: true });
+    overlay.addEventListener('touchend', e => {
+      const dy = _swipeY - e.changedTouches[0].clientY;
+      if (Math.abs(dy) < 50) return;            // too short — ignore
+      if (dy > 0 && !nextBtn.disabled) nextBtn.click();  // swipe up → next
+      else if (dy < 0 && !prevBtn.disabled) prevBtn.click(); // swipe down → prev
+    }, { passive: true });
+
     overlay.focus();
   }
 
@@ -903,10 +916,14 @@
     video.src = videoPath;
     video.muted = true;
     video.autoplay = true;
-    video.loop = true;
     video.playsInline = true;
     video.poster = coverSrc;
     video.className = 'player-video';
+    // Manual loop — avoids the black-frame flash that browser native loop produces
+    video.addEventListener('ended', () => {
+      video.currentTime = 0;
+      video.play().catch(() => {});
+    });
     wrap.appendChild(video);
 
     const controls = document.createElement('div');
@@ -1429,10 +1446,10 @@ render();
       }
       .player-mute-btn { position: absolute; bottom: 10px; right: 10px; pointer-events: auto; }
 
-      /* Per-column navigation buttons */
+      /* Per-column navigation buttons — horizontal row on desktop */
       .player-col-nav {
         position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
-        display: flex; flex-direction: column; gap: 4px;
+        display: flex; flex-direction: row; gap: 8px;
         pointer-events: auto; align-items: center;
       }
       .player-col-nav-btn {
@@ -1482,6 +1499,12 @@ render();
 
         /* ── Hide star bubble on mobile ── */
         #star-toggle { display: none !important; }
+
+        /* ── Player sits above the bottom nav bar ── */
+        #player-overlay { bottom: 62px !important; }
+
+        /* ── Col-nav buttons hidden on mobile (swipe replaces them) ── */
+        .player-col-nav { display: none !important; }
 
         /* ── Bottom tab bar ── */
         nav {
