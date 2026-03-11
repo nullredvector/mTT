@@ -135,6 +135,53 @@
 
   function scanCards() {
     document.querySelectorAll('div.cover').forEach(injectOrUpdateButton);
+    applyMobileCards();
+  }
+
+  function applyMobileCards() {
+    if (window.innerWidth >= 768) return;
+
+    // Inject caption overlays into each cover thumbnail
+    document.querySelectorAll('div.cover').forEach(coverDiv => {
+      // Re-render caption if the src changed (virtualized list recycles rows)
+      const img = coverDiv.querySelector('img.thumbnail');
+      const src = img ? (img.getAttribute('src') || '') : '';
+      if (coverDiv.dataset.spCapSrc === src) return; // already up-to-date
+      coverDiv.dataset.spCapSrc = src;
+
+      coverDiv.querySelector('.sp-cap')?.remove();
+
+      const videoId = getVideoIdFromSrc(src);
+      if (!videoId) return;
+
+      const { desc, authorName } = getVideoInfo(videoId);
+      let txt = '';
+      if (authorName) txt = '@' + authorName;
+      if (desc) txt += (txt ? '\n' : '') + (desc.length > 100 ? desc.slice(0, 100) + '…' : desc);
+
+      // Fallback: scrape text from sibling cells in the row
+      if (!txt) {
+        const row = coverDiv.parentElement;
+        if (row) {
+          const scope = row.querySelector('.column-titles') || row;
+          const el = scope.querySelector('a, .link, .searchable, .underline');
+          if (el) txt = el.textContent.trim().slice(0, 80);
+        }
+      }
+
+      if (!txt) return;
+      const cap = document.createElement('div');
+      cap.className = 'sp-cap';
+      cap.textContent = txt;
+      coverDiv.appendChild(cap);
+    });
+
+    // Hide "Explain" buttons (app.js renders these; useless on mobile)
+    document.querySelectorAll('button').forEach(btn => {
+      if (/^explain$/i.test(btn.textContent.trim())) {
+        btn.style.setProperty('display', 'none', 'important');
+      }
+    });
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -919,6 +966,8 @@
     video.playsInline = true;
     video.poster = coverSrc;
     video.className = 'player-video';
+    // Drop the poster as soon as real frames start rendering — prevents thumbnail flash on loop
+    video.addEventListener('playing', () => { video.poster = ''; }, { once: true });
     // Manual loop — avoids the black-frame flash that browser native loop produces
     video.addEventListener('ended', () => {
       video.currentTime = 0;
@@ -1547,13 +1596,30 @@ render();
         body { padding-bottom: 62px !important; }
         /* Stars view must not slip behind nav */
         #stars-view { max-height: calc(100vh - 62px) !important; }
-        /* ── Horizontal-scroll video list so all columns are visible ── */
-        main {
-          overflow-x: auto !important;
-          -webkit-overflow-scrolling: touch !important;
+        /* ── Mobile card layout for video list ── */
+        /* Stop forcing horizontal scroll — show cards instead */
+        main { overflow-x: hidden !important; }
+        main > * { min-width: 0 !important; }
+
+        /* Cover thumbnails: taller so they feel like cards */
+        div.cover { height: 110px !important; }
+
+        /* Hide table columns after the first text column (keep cover + 1 sibling) */
+        div.cover ~ * ~ * { display: none !important; }
+
+        /* Caption overlay injected by applyMobileCards() */
+        .sp-cap {
+          position: absolute; bottom: 0; left: 0; right: 0;
+          background: linear-gradient(transparent, rgba(0,0,0,.85));
+          color: #fff; font-size: 10px; line-height: 1.35;
+          padding: 18px 5px 5px; white-space: pre-line;
+          pointer-events: none; z-index: 5;
+          overflow: hidden; display: -webkit-box;
+          -webkit-line-clamp: 4; -webkit-box-orient: vertical;
         }
-        /* Force the list's direct child containers wide enough to show all columns */
-        main > * { min-width: 640px !important; }
+
+        /* Explain button: hide via CSS as belt-and-suspenders */
+        [class*="explain"], [id*="explain"] { display: none !important; }
       }
 
       /* Phones: star panel and toggle sit above the bottom nav */
