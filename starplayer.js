@@ -905,24 +905,27 @@
     header.appendChild(rightBtns);
     overlay.appendChild(header);
 
-    // ── Stage ─────────────────────────────────────────────────────────────────
-    const stage = document.createElement('div');
-    stage.id = 'player-stage';
-
-    for (let i = 0; i < cols; i++) {
-      const col = document.createElement('div');
-      col.className = 'player-column';
-      col.dataset.col = i;
-      const idx = playerColumnOffsets[i];
-      if (idx < total) col.appendChild(buildPlayerColumn(playerVideoList[idx], i));
-      else col.classList.add('player-column-empty');
-      stage.appendChild(col);
+    // ── Stage: desktop = side-by-side columns | mobile = scroll-snap feed ──────
+    if (cols > 1) {
+      const stage = document.createElement('div');
+      stage.id = 'player-stage';
+      for (let i = 0; i < cols; i++) {
+        const col = document.createElement('div');
+        col.className = 'player-column';
+        col.dataset.col = i;
+        const idx = playerColumnOffsets[i];
+        if (idx < total) col.appendChild(buildPlayerColumn(playerVideoList[idx], i));
+        else col.classList.add('player-column-empty');
+        stage.appendChild(col);
+      }
+      overlay.appendChild(stage);
+    } else {
+      renderMobileScrollFeed(overlay);
     }
 
-    overlay.appendChild(stage);
     document.body.appendChild(overlay);
 
-    // Keyboard: Escape, ←/→ global, q/w/e up, a/s/d down per column
+    // Keyboard navigation (all screen sizes)
     const colKeys = {
       q: [0, -1], w: [1, -1], e: [2, -1],
       a: [0,  1], s: [1,  1], d: [2,  1],
@@ -938,19 +941,139 @@
       }
     });
 
-    // Swipe up → next video, swipe down → previous (mobile only)
-    let _swipeY = 0;
-    overlay.addEventListener('touchstart', e => {
-      _swipeY = e.touches[0].clientY;
-    }, { passive: true });
-    overlay.addEventListener('touchend', e => {
-      const dy = _swipeY - e.changedTouches[0].clientY;
-      if (Math.abs(dy) < 50) return;            // too short — ignore
-      if (dy > 0 && !nextBtn.disabled) nextBtn.click();  // swipe up → next
-      else if (dy < 0 && !prevBtn.disabled) prevBtn.click(); // swipe down → prev
-    }, { passive: true });
+    // Swipe gestures only for desktop columns (mobile uses native scroll-snap)
+    if (cols > 1) {
+      let _swipeY = 0;
+      overlay.addEventListener('touchstart', e => {
+        _swipeY = e.touches[0].clientY;
+      }, { passive: true });
+      overlay.addEventListener('touchend', e => {
+        const dy = _swipeY - e.changedTouches[0].clientY;
+        if (Math.abs(dy) < 50) return;
+        if (dy > 0 && !nextBtn.disabled) nextBtn.click();
+        else if (dy < 0 && !prevBtn.disabled) prevBtn.click();
+      }, { passive: true });
+    }
 
     overlay.focus();
+  }
+
+  // ── Mobile scroll-snap player feed ─────────────────────────────────────────
+  function renderMobileScrollFeed(overlay) {
+    const counter = overlay.querySelector('#player-counter');
+    const total   = playerVideoList.length;
+
+    const feed = document.createElement('div');
+    feed.id = 'player-feed';
+    overlay.appendChild(feed);
+
+    if (!total) return; // still loading — feed shows empty, counter says "Loading…"
+
+    const videoEls = [];
+
+    playerVideoList.forEach((item, idx) => {
+      const slide = document.createElement('div');
+      slide.className = 'player-slide';
+      slide.dataset.idx = idx;
+
+      // Video — preload=none so only the playing one downloads
+      const video = document.createElement('video');
+      video.src = item.videoPath;
+      video.preload = 'none';
+      video.muted = true;
+      video.playsInline = true;
+      video.poster = item.coverSrc;
+      video.className = 'player-video';
+      video.addEventListener('playing', () => { video.poster = ''; }, { once: true });
+      video.addEventListener('ended',   () => { video.currentTime = 0; video.play().catch(() => {}); });
+      slide.appendChild(video);
+
+      // Controls overlay (same layout as desktop columns)
+      const controls = document.createElement('div');
+      controls.className = 'player-controls';
+
+      const rightCenter = document.createElement('div');
+      rightCenter.className = 'player-right-center';
+
+      const starBtn = document.createElement('button');
+      starBtn.className = 'player-ctrl-btn player-star-btn' + (stars[item.id] ? ' active' : '');
+      starBtn.innerHTML = '★';
+      starBtn.title = stars[item.id] ? 'Remove from Stars' : 'Add to Stars';
+      starBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        toggleStar(item.id, item.coverSrc);
+        starBtn.classList.toggle('active', Boolean(stars[item.id]));
+        starBtn.title = stars[item.id] ? 'Remove from Stars' : 'Add to Stars';
+      });
+
+      const groupBtn = document.createElement('button');
+      groupBtn.className = 'player-ctrl-btn player-group-btn';
+      groupBtn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>';
+      groupBtn.title = 'Add to group';
+      groupBtn.addEventListener('click', e => { e.stopPropagation(); showGroupPicker(groupBtn, item.id); });
+
+      rightCenter.appendChild(starBtn);
+      rightCenter.appendChild(groupBtn);
+      controls.appendChild(rightCenter);
+
+      if (item.authorName) {
+        const auth = document.createElement('div');
+        auth.className = 'player-author';
+        auth.textContent = '@' + item.authorName;
+        controls.appendChild(auth);
+      }
+
+      let muted = true;
+      const muteBtn = document.createElement('button');
+      muteBtn.className = 'player-ctrl-btn player-mute-btn';
+      muteBtn.innerHTML = muteIcon(true);
+      muteBtn.title = 'Unmute';
+      muteBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        muted = !muted;
+        video.muted = muted;
+        muteBtn.innerHTML = muteIcon(muted);
+        muteBtn.title = muted ? 'Unmute' : 'Mute';
+      });
+      controls.appendChild(muteBtn);
+
+      slide.appendChild(controls);
+      feed.appendChild(slide);
+      videoEls.push(video);
+    });
+
+    // Size each slide to exactly fill the feed container (resolved after layout)
+    requestAnimationFrame(() => {
+      const h = feed.clientHeight;
+      if (h > 0) feed.querySelectorAll('.player-slide').forEach(s => { s.style.height = h + 'px'; });
+    });
+
+    // Restore last-viewed position without animation
+    const startIdx = playerColumnOffsets[0] || 0;
+    if (startIdx > 0 && feed.children[startIdx]) {
+      feed.children[startIdx].scrollIntoView({ behavior: 'instant' });
+    }
+
+    // IntersectionObserver: play the centered slide, pause everything else
+    const io = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        const idx = parseInt(entry.target.dataset.idx);
+        const vid = videoEls[idx];
+        if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
+          playerColumnOffsets[0] = idx;
+          vid.play().catch(() => {});
+          if (counter) counter.textContent = `${idx + 1} / ${total}`;
+        } else {
+          vid.pause();
+        }
+      });
+    }, { threshold: 0.6 });
+
+    feed.querySelectorAll('.player-slide').forEach(s => io.observe(s));
+
+    // Kick off the starting video
+    videoEls[startIdx]?.play().catch(() => {});
+    if (counter) counter.textContent = `${startIdx + 1} / ${total}`;
   }
 
   function buildPlayerColumn(item, colIdx) {
@@ -1512,6 +1635,20 @@ render();
         font-family: monospace; padding: 0 6px;
       }
 
+      /* ── Mobile scroll-snap feed ── */
+      #player-feed {
+        flex: 1; overflow-y: scroll; overflow-x: hidden;
+        scroll-snap-type: y mandatory;
+        -webkit-overflow-scrolling: touch;
+        overscroll-behavior-y: contain;
+      }
+      .player-slide {
+        /* height set via JS after layout; scroll-snap handles full-view snapping */
+        scroll-snap-align: start; scroll-snap-stop: always;
+        position: relative; background: #000; overflow: hidden;
+        flex-shrink: 0;
+      }
+
       /* ── Responsive / mobile ── */
 
       /* Tablets and small desktops: tighten the star panel */
@@ -1552,8 +1689,10 @@ render();
         /* ── Player sits above the bottom nav bar ── */
         #player-overlay { bottom: 62px !important; }
 
-        /* ── Col-nav buttons hidden on mobile (swipe replaces them) ── */
+        /* ── Col-nav buttons hidden on mobile (scroll-snap replaces them) ── */
         .player-col-nav { display: none !important; }
+        /* ── Prev/next arrow buttons hidden on mobile ── */
+        #player-overlay .player-nav-btn { display: none !important; }
 
         /* ── Bottom tab bar ── */
         nav {
