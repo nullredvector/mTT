@@ -1,0 +1,17 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+# starplayer.js is baked into the image at build time
+COPY starplayer.js ./starplayer.js
+COPY server.js     ./server.js
+COPY entrypoint.sh ./entrypoint.sh
+
+RUN chmod +x /app/entrypoint.sh
+
+ENV ARCHIVE_DIR=/archive
+ENV PORT=8080
+
+EXPOSE 8080
+
+ENTRYPOINT ["/app/entrypoint.sh"]
