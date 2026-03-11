@@ -8,6 +8,8 @@ services:
       - /mnt/zion/enc/archive/Downloads/incomplete/content2/shorts:/archive
     environment:
       - ARCHIVE_DIR=/archive
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
 
   watchtower:
     image: containrrr/watchtower
@@ -18,3 +20,4 @@ services:
       - WATCHTOWER_POLL_INTERVAL=30
       - WATCHTOWER_CLEANUP=true
       - WATCHTOWER_INCLUDE_STOPPED=false
+      - WATCHTOWER_LABEL_ENABLE=true
