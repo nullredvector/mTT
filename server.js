@@ -46,18 +46,53 @@ http.createServer((req, res) => {
     res.writeHead(403); res.end('Forbidden'); return;
   }
 
-  fs.readFile(filePath, (err, data) => {
+  const ext  = path.extname(filePath).toLowerCase();
+  const mime = MIME[ext] || 'application/octet-stream';
+
+  // Archive.html: read into memory, patch, send
+  if (isRoot) {
+    fs.readFile(filePath, 'utf8', (err, data) => {
+      if (err) {
+        res.writeHead(err.code === 'ENOENT' ? 404 : 500);
+        res.end(err.code === 'ENOENT' ? 'Not found' : 'Server error');
+        return;
+      }
+      const body = patchHtml(data);
+      res.writeHead(200, { 'Content-Type': mime });
+      res.end(body);
+    });
+    return;
+  }
+
+  // All other files: stream with range request support (required for video)
+  fs.stat(filePath, (err, stat) => {
     if (err) {
       res.writeHead(err.code === 'ENOENT' ? 404 : 500);
       res.end(err.code === 'ENOENT' ? 'Not found' : 'Server error');
       return;
     }
 
-    const ext  = path.extname(filePath).toLowerCase();
-    const mime = MIME[ext] || 'application/octet-stream';
-    const body = isRoot ? patchHtml(data.toString('utf8')) : data;
+    const total = stat.size;
+    const range = req.headers['range'];
 
-    res.writeHead(200, { 'Content-Type': mime });
-    res.end(body);
+    if (range) {
+      const [startStr, endStr] = range.replace(/bytes=/, '').split('-');
+      const start = parseInt(startStr, 10);
+      const end   = endStr ? parseInt(endStr, 10) : total - 1;
+      res.writeHead(206, {
+        'Content-Range':  `bytes ${start}-${end}/${total}`,
+        'Accept-Ranges':  'bytes',
+        'Content-Length': end - start + 1,
+        'Content-Type':   mime,
+      });
+      fs.createReadStream(filePath, { start, end }).pipe(res);
+    } else {
+      res.writeHead(200, {
+        'Accept-Ranges':  'bytes',
+        'Content-Length': total,
+        'Content-Type':   mime,
+      });
+      fs.createReadStream(filePath).pipe(res);
+    }
   });
 }).listen(PORT, () => console.log(`[starplayer] listening on http://localhost:${PORT}`));
