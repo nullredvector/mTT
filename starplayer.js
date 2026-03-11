@@ -1445,6 +1445,63 @@ render();
         font-size: 11px; color: #444; letter-spacing: .5px; user-select: none;
         font-family: monospace; padding: 0 6px;
       }
+
+      /* ── Responsive / mobile ── */
+
+      /* Tablets and small desktops: tighten the star panel */
+      @media (max-width: 768px) {
+        /* Player: only first column visible */
+        .player-column:not([data-col="0"]) { display: none; }
+        /* Hotkeys are desktop-only */
+        #player-hotkeys { display: none; }
+        /* Slightly bigger touch targets */
+        .player-ctrl-btn { width: 52px; height: 52px; font-size: 22px; }
+        .player-col-nav-btn { width: 42px !important; height: 42px !important; font-size: 20px !important; }
+        /* Stars sidebar becomes a horizontal scrolling pill strip */
+        #stars-view { flex-direction: column; }
+        #stars-sidebar {
+          width: 100%; flex-direction: row; flex-wrap: nowrap;
+          overflow-x: auto; overflow-y: hidden;
+          border-right: none; border-bottom: 1px solid #3a3a3a;
+          padding: 4px 8px; gap: 4px;
+        }
+        #stars-sidebar::-webkit-scrollbar { height: 3px; }
+        #stars-sidebar::-webkit-scrollbar-thumb { background: #444; border-radius: 2px; }
+        .stars-sidebar-divider { display: none; }
+        .stars-group-item {
+          white-space: nowrap; flex-shrink: 0;
+          border-radius: 20px; background: #222;
+          padding: 5px 12px;
+        }
+        .stars-group-item.active { background: #333; }
+        .stars-group-row { flex-shrink: 0; }
+        .stars-group-action { display: none; }
+        #stars-new-group-btn { margin: 2px 0; white-space: nowrap; flex-shrink: 0; }
+        #stars-main-header { padding: 10px 12px 8px; }
+        #stars-grid { padding: 10px 12px; gap: 10px; }
+      }
+
+      /* Phones: star panel goes full-width */
+      @media (max-width: 480px) {
+        #star-panel {
+          width: calc(100vw - 24px);
+          right: 12px; left: 12px; bottom: 58px;
+        }
+        #star-toggle { bottom: 12px; right: 12px; }
+        /* Tighter player header */
+        #player-header { padding: 6px 10px; gap: 4px; }
+        #player-title { font-size: 13px; }
+        #player-counter { display: none; }
+        .player-nav-btn { padding: 6px 12px; }
+        .player-header-btn { padding: 5px 6px; }
+        /* Smaller grid min so more columns fit */
+        #stars-grid { grid-template-columns: repeat(auto-fill, minmax(85px, 1fr)); }
+      }
+
+      /* Very small phones: 2-col star panel grid */
+      @media (max-width: 360px) {
+        #star-panel-grid { grid-template-columns: repeat(2, 1fr); }
+      }
     `;
     document.head.appendChild(s);
   }
