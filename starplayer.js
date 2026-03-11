@@ -1479,15 +1479,61 @@ render();
         #stars-new-group-btn { margin: 2px 0; white-space: nowrap; flex-shrink: 0; }
         #stars-main-header { padding: 10px 12px 8px; }
         #stars-grid { padding: 10px 12px; gap: 10px; }
+
+        /* ── Bottom tab bar ── */
+        nav {
+          position: fixed !important;
+          bottom: 0 !important; top: auto !important;
+          left: 0 !important; right: 0 !important;
+          width: 100% !important; height: 62px !important;
+          flex-direction: row !important; align-items: stretch !important;
+          border-top: 1px solid #2a2a2a !important; border-bottom: none !important;
+          overflow-x: auto !important; overflow-y: hidden !important;
+          z-index: 500 !important; padding: 0 !important;
+          background: #1a1a1a !important;
+        }
+        /* Each tab: icon centred above label */
+        nav > div {
+          flex: 1 1 0 !important; min-width: 54px !important;
+          flex-direction: column !important; align-items: center !important;
+          justify-content: center !important; gap: 2px !important;
+          padding: 5px 4px 3px !important;
+          font-size: 10px !important; line-height: 1.2 !important;
+          border-bottom: none !important; border-top: 3px solid transparent !important;
+        }
+        nav > div.active {
+          border-bottom: none !important;
+          border-top: 3px solid var(--active, currentColor) !important;
+        }
+        nav > div svg { width: 22px !important; height: 22px !important; }
+        /* Flip injected-tab active indicator from bottom → top */
+        nav .stars-tab, nav .player-tab {
+          border-bottom: none !important; border-top: 3px solid transparent !important;
+        }
+        nav .stars-tab.active, nav .player-tab.active {
+          border-bottom: none !important;
+          border-top: 3px solid var(--active, #d7d7d7) !important;
+        }
+        /* Push all page content above the fixed bottom nav */
+        body { padding-bottom: 62px !important; }
+        /* Stars view must not slip behind nav */
+        #stars-view { max-height: calc(100vh - 62px) !important; }
+        /* ── Horizontal-scroll video list so all columns are visible ── */
+        main {
+          overflow-x: auto !important;
+          -webkit-overflow-scrolling: touch !important;
+        }
+        /* Force the list's direct child containers wide enough to show all columns */
+        main > * { min-width: 640px !important; }
       }
 
-      /* Phones: star panel goes full-width */
+      /* Phones: star panel and toggle sit above the bottom nav */
       @media (max-width: 480px) {
         #star-panel {
           width: calc(100vw - 24px);
-          right: 12px; left: 12px; bottom: 58px;
+          right: 12px; left: 12px; bottom: 74px;
         }
-        #star-toggle { bottom: 12px; right: 12px; }
+        #star-toggle { bottom: 70px; right: 12px; }
         /* Tighter player header */
         #player-header { padding: 6px 10px; gap: 4px; }
         #player-title { font-size: 13px; }
