@@ -881,44 +881,62 @@
       return item;
     }
 
-    // ── Lvl filter (collapsible) ──────────────────────────────────────────────
+    // ── Lvl filter (thumbnail cards per occupied level) ───────────────────────
     const lvlSection = document.createElement('div');
     lvlSection.id = 'stars-lvl-section';
 
-    const lvlHeader = document.createElement('div');
-    lvlHeader.id = 'stars-lvl-header';
-    const lvlHeaderLabel = document.createElement('span');
-    lvlHeaderLabel.textContent = 'lvl';
-    const lvlChevron = document.createElement('span');
-    lvlChevron.id = 'stars-lvl-chevron';
-    lvlChevron.textContent = lvlSectionOpen ? '▾' : '▸';
-    lvlHeader.appendChild(lvlHeaderLabel);
-    lvlHeader.appendChild(lvlChevron);
+    const lvlLabel = document.createElement('div');
+    lvlLabel.id = 'stars-lvl-label';
+    lvlLabel.textContent = 'lvl';
+    lvlSection.appendChild(lvlLabel);
 
     const lvlGrid = document.createElement('div');
     lvlGrid.id = 'stars-lvl-grid';
-    lvlGrid.style.display = lvlSectionOpen ? 'grid' : 'none';
 
-    for (let n = 10; n <= 23; n++) {
-      const count = Object.keys(levels).filter(id => levels[id] === n).length;
-      const btn = document.createElement('button');
-      btn.className = 'stars-lvl-btn' + (activeLvl.has(n) ? ' active' : '');
-      btn.textContent = n;
-      btn.title = count + ' video' + (count !== 1 ? 's' : '');
-      btn.addEventListener('click', () => {
-        if (activeLvl.has(n)) activeLvl.delete(n); else activeLvl.add(n);
-        renderStarsView();
+    // Group videos by level (preserving insertion order → last = most recent)
+    const levelGroups = {};
+    Object.entries(levels).forEach(([id, n]) => {
+      if (n != null) { if (!levelGroups[n]) levelGroups[n] = []; levelGroups[n].push(id); }
+    });
+    const occupiedLvls = Object.keys(levelGroups).map(Number).sort((a, b) => a - b);
+
+    if (occupiedLvls.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'stars-lvl-empty';
+      empty.textContent = 'No lvl assigned';
+      lvlGrid.appendChild(empty);
+    } else {
+      occupiedLvls.forEach(n => {
+        const ids = levelGroups[n];
+        const recentId = ids[ids.length - 1];
+        const coverSrc = stars[recentId]?.coverSrc || '';
+
+        const card = document.createElement('div');
+        card.className = 'stars-lvl-card' + (activeLvl.has(n) ? ' active' : '');
+
+        if (coverSrc) {
+          const img = document.createElement('img');
+          img.src = coverSrc; img.className = 'stars-lvl-card-img';
+          card.appendChild(img);
+        }
+        const badge = document.createElement('span');
+        badge.className = 'stars-lvl-card-badge';
+        badge.textContent = n;
+        card.appendChild(badge);
+
+        const countEl = document.createElement('span');
+        countEl.className = 'stars-lvl-card-count';
+        countEl.textContent = ids.length;
+        card.appendChild(countEl);
+
+        card.addEventListener('click', () => {
+          if (activeLvl.has(n)) activeLvl.delete(n); else activeLvl.add(n);
+          renderStarsView();
+        });
+        lvlGrid.appendChild(card);
       });
-      lvlGrid.appendChild(btn);
     }
 
-    lvlHeader.addEventListener('click', () => {
-      lvlSectionOpen = lvlGrid.style.display === 'none';
-      lvlGrid.style.display = lvlSectionOpen ? 'grid' : 'none';
-      lvlChevron.textContent = lvlSectionOpen ? '▾' : '▸';
-    });
-
-    lvlSection.appendChild(lvlHeader);
     lvlSection.appendChild(lvlGrid);
     sidebar.appendChild(lvlSection);
 
@@ -987,10 +1005,11 @@
       ? 'All Stars'
       : (groups.find(g => g.id === activeGroupId)?.name || 'Stars');
 
-    const baseVideos = activeGroupId === 'all'
-      ? Object.values(stars)
+    const allPairs = activeGroupId === 'all'
+      ? Object.entries(stars)
       : (groups.find(g => g.id === activeGroupId)?.videoIds || [])
-          .filter(id => stars[id]).map(id => stars[id]);
+          .filter(id => stars[id]).map(id => [id, stars[id]]);
+    const baseVideos = allPairs.map(([key, s]) => ({ ...s, id: key }));
     const videosToShow = activeLvl.size > 0
       ? baseVideos.filter(s => activeLvl.has(levels[s.id]))
       : baseVideos;
@@ -1081,15 +1100,17 @@
   // ═══════════════════════════════════════════════════════════════════════════
 
   function showGroupPicker(anchorBtn, videoId) {
-    document.getElementById('stars-group-picker')?.remove();
+    const targetDoc = anchorBtn.ownerDocument || document;
+    targetDoc.getElementById('stars-group-picker')?.remove();
     if (!groups.length) return;
 
     const picker = document.createElement('div');
     picker.id = 'stars-group-picker';
+    picker.style.cssText = 'position:fixed;z-index:9999;background:#252525;border:1px solid #555;border-radius:6px;padding:6px 0;min-width:160px;box-shadow:0 4px 16px rgba(0,0,0,.6);';
 
     groups.forEach(g => {
       const row = document.createElement('label');
-      row.className = 'stars-picker-row';
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 14px;font-size:13px;cursor:pointer;color:#ccc;white-space:nowrap;';
       const cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.checked = g.videoIds.includes(videoId);
@@ -1104,27 +1125,39 @@
       picker.appendChild(row);
     });
 
-    document.body.appendChild(picker);
+    targetDoc.body.appendChild(picker);
     const rect = anchorBtn.getBoundingClientRect();
     const pw = picker.offsetWidth || 160;
-    const ph = picker.offsetHeight || 120;
-    picker.style.top  = Math.max(4, rect.top + window.scrollY + rect.height / 2 - ph / 2) + 'px';
-    picker.style.left = (rect.left + window.scrollX - pw - 6) + 'px';
+    const ph = picker.offsetHeight || 100;
+    picker.style.top  = Math.max(4, rect.top + rect.height / 2 - ph / 2) + 'px';
+    picker.style.left = Math.max(4, rect.left - pw - 6) + 'px';
 
     setTimeout(() => {
-      document.addEventListener('click', function h(e) {
-        if (!picker.contains(e.target)) { picker.remove(); document.removeEventListener('click', h); }
+      targetDoc.addEventListener('click', function h(e) {
+        if (!picker.contains(e.target)) { picker.remove(); targetDoc.removeEventListener('click', h); }
       });
     }, 0);
   }
 
   function showLevelPicker(anchorBtn, videoId, onUpdate) {
-    document.getElementById('level-picker')?.remove();
+    const targetDoc = anchorBtn.ownerDocument || document;
+    targetDoc.getElementById('level-picker')?.remove();
 
     const picker = document.createElement('div');
     picker.id = 'level-picker';
+    picker.style.cssText = 'position:fixed;z-index:9999;background:#252525;border:1px solid #555;border-radius:8px;padding:8px 8px 10px;box-shadow:0 4px 20px rgba(0,0,0,.7);display:flex;flex-direction:column;align-items:center;gap:4px;';
 
     const currentLvl = levels[videoId] ?? null;
+
+    const clearBtn = document.createElement('button');
+    clearBtn.textContent = '×';
+    clearBtn.style.cssText = 'background:none;border:none;color:#888;font-size:16px;cursor:pointer;padding:0;line-height:1;align-self:stretch;text-align:center;';
+    clearBtn.title = 'Clear';
+    clearBtn.addEventListener('click', () => {
+      delete levels[videoId]; saveLevels();
+      onUpdate(null); picker.remove();
+    });
+    picker.appendChild(clearBtn);
 
     const slider = document.createElement('input');
     slider.type  = 'range';
@@ -1140,17 +1173,17 @@
     });
     picker.appendChild(slider);
 
-    document.body.appendChild(picker);
+    targetDoc.body.appendChild(picker);
     const rect = anchorBtn.getBoundingClientRect();
     const pw = picker.offsetWidth || 50;
-    const ph = picker.offsetHeight || 140;
-    picker.style.top  = Math.max(4, rect.top + window.scrollY + rect.height / 2 - ph / 2) + 'px';
-    picker.style.left = (rect.left + window.scrollX - pw - 6) + 'px';
+    const ph = picker.offsetHeight || 160;
+    picker.style.top  = Math.max(4, rect.top + rect.height / 2 - ph / 2) + 'px';
+    picker.style.left = Math.max(4, rect.left - pw - 6) + 'px';
 
     setTimeout(() => {
-      document.addEventListener('click', function h(e) {
+      targetDoc.addEventListener('click', function h(e) {
         if (!picker.contains(e.target) && e.target !== anchorBtn) {
-          picker.remove(); document.removeEventListener('click', h);
+          picker.remove(); targetDoc.removeEventListener('click', h);
         }
       });
     }, 0);
@@ -2180,15 +2213,8 @@ render();
       .stars-grid-add-group:hover { background:rgba(0,100,200,.7); color:#fff; }
       .stars-grid-author { font-size:11px; color:#999; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
       .stars-grid-desc   { font-size:11px; color:#666; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-      #stars-group-picker { position:absolute; z-index:5500; background:#252525; border:1px solid #555; border-radius:6px; padding:6px 0; min-width:160px; box-shadow:0 4px 16px rgba(0,0,0,.6); }
-      .stars-picker-row { display:flex; align-items:center; gap:8px; padding:6px 14px; font-size:13px; cursor:pointer; transition:background .1s; }
-      .stars-picker-row:hover { background:#333; }
 
-      /* ── Level picker popup ── */
-      #level-picker {
-        position:absolute; z-index:5500; background:#252525; border:1px solid #555;
-        border-radius:8px; padding:10px 8px; box-shadow:0 4px 20px rgba(0,0,0,.7);
-      }
+      /* ── Level picker popup (inline styles applied in JS; only slider style needed) ── */
       #level-picker-slider {
         writing-mode:vertical-lr; direction:rtl;
         appearance:slider-vertical; -webkit-appearance:slider-vertical;
@@ -2200,25 +2226,33 @@ render();
 
       /* ── Stars sidebar lvl section ── */
       #stars-lvl-section { margin-bottom:4px; }
-      #stars-lvl-header {
-        display:flex; align-items:center; justify-content:space-between;
-        padding:6px 10px; cursor:pointer; border-radius:5px;
-        font-size:12px; font-weight:700; color:#aaa; letter-spacing:.5px;
-        text-transform:uppercase; user-select:none; transition:background .1s;
+      #stars-lvl-label {
+        padding:6px 10px 4px; font-size:11px; font-weight:700; color:#666;
+        letter-spacing:.5px; text-transform:uppercase;
       }
-      #stars-lvl-header:hover { background:#2a2a2a; }
-      #stars-lvl-chevron { font-size:10px; }
       #stars-lvl-grid {
-        display:grid; grid-template-columns:repeat(4,1fr); gap:4px;
-        padding:4px 6px 8px;
+        display:grid; grid-template-columns:repeat(2,1fr); gap:5px;
+        padding:0 6px 8px;
       }
-      .stars-lvl-btn {
-        background:#1e1e1e; border:1px solid #3a3a3a; border-radius:4px;
-        color:#bbb; font-size:12px; font-weight:600; padding:4px 0;
-        cursor:pointer; transition:background .1s, color .1s, border-color .1s;
+      .stars-lvl-card {
+        position:relative; aspect-ratio:9/16; border-radius:6px; overflow:hidden;
+        cursor:pointer; border:2px solid transparent; background:#1a1a1a;
+        transition:border-color .15s;
       }
-      .stars-lvl-btn:hover  { background:#2a2a2a; color:#fff; }
-      .stars-lvl-btn.active { background:#fe2c55; border-color:#fe2c55; color:#fff; }
+      .stars-lvl-card:hover { border-color:#666; }
+      .stars-lvl-card.active { border-color:#fe2c55; }
+      .stars-lvl-card-img { width:100%; height:100%; object-fit:cover; display:block; }
+      .stars-lvl-card-badge {
+        position:absolute; bottom:5px; left:0; right:0; text-align:center;
+        font-size:17px; font-weight:800; color:#fff;
+        text-shadow:0 1px 6px rgba(0,0,0,1);
+      }
+      .stars-lvl-card-count {
+        position:absolute; top:4px; right:4px; font-size:10px; font-weight:600;
+        color:rgba(255,255,255,.8); background:rgba(0,0,0,.55); border-radius:3px;
+        padding:1px 4px;
+      }
+      .stars-lvl-empty { padding:4px 10px 8px; font-size:12px; color:#555; }
 
       /* ── Video overlay (unified player) ── */
       #video-overlay {
