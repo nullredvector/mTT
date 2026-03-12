@@ -881,64 +881,27 @@
       return item;
     }
 
-    // ── Lvl filter (thumbnail cards per occupied level) ───────────────────────
-    const lvlSection = document.createElement('div');
-    lvlSection.id = 'stars-lvl-section';
-
-    const lvlLabel = document.createElement('div');
-    lvlLabel.id = 'stars-lvl-label';
-    lvlLabel.textContent = 'lvl';
-    lvlSection.appendChild(lvlLabel);
+    // ── Lvl nav item + numbered filter buttons ────────────────────────────────
+    const lvlNavItem = makeSidebarItem('__lvl_groups__', 'lvl', '');
+    lvlNavItem.addEventListener('click', () => { activeGroupId = '__lvl_groups__'; activeLvl.clear(); renderStarsView(); });
+    sidebar.appendChild(lvlNavItem);
 
     const lvlGrid = document.createElement('div');
     lvlGrid.id = 'stars-lvl-grid';
-
-    // Group videos by level (preserving insertion order → last = most recent)
-    const levelGroups = {};
-    Object.entries(levels).forEach(([id, n]) => {
-      if (n != null) { if (!levelGroups[n]) levelGroups[n] = []; levelGroups[n].push(id); }
-    });
-    const occupiedLvls = Object.keys(levelGroups).map(Number).sort((a, b) => a - b);
-
-    if (occupiedLvls.length === 0) {
-      const empty = document.createElement('div');
-      empty.className = 'stars-lvl-empty';
-      empty.textContent = 'No lvl assigned';
-      lvlGrid.appendChild(empty);
-    } else {
-      occupiedLvls.forEach(n => {
-        const ids = levelGroups[n];
-        const recentId = ids[ids.length - 1];
-        const coverSrc = stars[recentId]?.coverSrc || '';
-
-        const card = document.createElement('div');
-        card.className = 'stars-lvl-card' + (activeLvl.has(n) ? ' active' : '');
-
-        if (coverSrc) {
-          const img = document.createElement('img');
-          img.src = coverSrc; img.className = 'stars-lvl-card-img';
-          card.appendChild(img);
-        }
-        const badge = document.createElement('span');
-        badge.className = 'stars-lvl-card-badge';
-        badge.textContent = n;
-        card.appendChild(badge);
-
-        const countEl = document.createElement('span');
-        countEl.className = 'stars-lvl-card-count';
-        countEl.textContent = ids.length;
-        card.appendChild(countEl);
-
-        card.addEventListener('click', () => {
-          if (activeLvl.has(n)) activeLvl.delete(n); else activeLvl.add(n);
-          renderStarsView();
-        });
-        lvlGrid.appendChild(card);
+    for (let n = 10; n <= 23; n++) {
+      const count = Object.keys(levels).filter(id => levels[id] === n).length;
+      const btn = document.createElement('button');
+      btn.className = 'stars-lvl-btn' + (activeLvl.has(n) ? ' active' : '');
+      btn.textContent = n;
+      btn.title = count + ' video' + (count !== 1 ? 's' : '');
+      btn.addEventListener('click', () => {
+        if (activeLvl.has(n)) activeLvl.delete(n); else activeLvl.add(n);
+        if (activeGroupId === '__lvl_groups__') activeGroupId = 'all';
+        renderStarsView();
       });
+      lvlGrid.appendChild(btn);
     }
-
-    lvlSection.appendChild(lvlGrid);
-    sidebar.appendChild(lvlSection);
+    sidebar.appendChild(lvlGrid);
 
     const lvlDivider = document.createElement('hr');
     lvlDivider.className = 'stars-sidebar-divider';
@@ -1001,41 +964,89 @@
     const mainArea = document.createElement('div');
     mainArea.id = 'stars-main';
 
-    const currentGroupName = activeGroupId === 'all'
-      ? 'All Stars'
-      : (groups.find(g => g.id === activeGroupId)?.name || 'Stars');
-
-    const allPairs = activeGroupId === 'all'
-      ? Object.entries(stars)
-      : (groups.find(g => g.id === activeGroupId)?.videoIds || [])
-          .filter(id => stars[id]).map(id => [id, stars[id]]);
-    const baseVideos = allPairs.map(([key, s]) => ({ ...s, id: key }));
-    const videosToShow = activeLvl.size > 0
-      ? baseVideos.filter(s => activeLvl.has(levels[s.id]))
-      : baseVideos;
+    // ── Build level groups map (used by both lvl view and filter) ─────────────
+    const levelGroupMap = {};
+    Object.entries(levels).forEach(([id, n]) => {
+      if (n != null) { if (!levelGroupMap[n]) levelGroupMap[n] = []; levelGroupMap[n].push(id); }
+    });
 
     const mainHeader = document.createElement('div');
     mainHeader.id = 'stars-main-header';
-    mainHeader.innerHTML =
-      `<span class="stars-main-title">${currentGroupName}</span>` +
-      `<span class="stars-main-count">${videosToShow.length} video${videosToShow.length !== 1 ? 's' : ''}</span>`;
     mainArea.appendChild(mainHeader);
 
     const grid = document.createElement('div');
     grid.id = 'stars-grid';
 
-    if (!videosToShow.length) {
-      const empty = document.createElement('div');
-      empty.id = 'stars-empty';
-      empty.innerHTML = activeGroupId === 'all'
-        ? 'No starred videos yet.<br>Click ★ on any video in Likes, Favorites, or Following.'
-        : 'No videos in this group yet.<br>Star videos and use ⊕ to add them here.';
-      grid.appendChild(empty);
+    if (activeGroupId === '__lvl_groups__') {
+      // ── Lvl groups view ─────────────────────────────────────────────────────
+      const occupiedLvls = Object.keys(levelGroupMap).map(Number).sort((a, b) => a - b);
+      mainHeader.innerHTML =
+        `<span class="stars-main-title">lvl</span>` +
+        `<span class="stars-main-count">${occupiedLvls.length} group${occupiedLvls.length !== 1 ? 's' : ''}</span>`;
+
+      if (!occupiedLvls.length) {
+        const empty = document.createElement('div');
+        empty.id = 'stars-empty';
+        empty.textContent = 'No levels assigned yet.';
+        grid.appendChild(empty);
+      } else {
+        occupiedLvls.forEach(n => {
+          const ids = levelGroupMap[n];
+          const recentId = ids[ids.length - 1];
+          const coverSrc = stars[recentId]?.coverSrc || '';
+          const card = document.createElement('div');
+          card.className = 'stars-lvl-group-card';
+          if (coverSrc) {
+            const img = document.createElement('img');
+            img.src = coverSrc; img.className = 'stars-lvl-group-img';
+            card.appendChild(img);
+          }
+          const badge = document.createElement('div');
+          badge.className = 'stars-lvl-group-badge';
+          badge.textContent = n;
+          card.appendChild(badge);
+          const countEl = document.createElement('div');
+          countEl.className = 'stars-lvl-group-count';
+          countEl.textContent = ids.length + ' video' + (ids.length !== 1 ? 's' : '');
+          card.appendChild(countEl);
+          card.addEventListener('click', () => {
+            activeGroupId = 'all'; activeLvl.clear(); activeLvl.add(n); renderStarsView();
+          });
+          grid.appendChild(card);
+        });
+      }
     } else {
-      videosToShow.forEach(star => {
-        const { desc, authorName } = getVideoInfo(star.id);
-        grid.appendChild(buildStarsGridCard(star, authorName, desc));
-      });
+      // ── Normal video grid ────────────────────────────────────────────────────
+      const currentGroupName = activeGroupId === 'all'
+        ? 'All Stars'
+        : (groups.find(g => g.id === activeGroupId)?.name || 'Stars');
+
+      const allPairs = activeGroupId === 'all'
+        ? Object.entries(stars)
+        : (groups.find(g => g.id === activeGroupId)?.videoIds || [])
+            .filter(id => stars[id]).map(id => [id, stars[id]]);
+      const baseVideos = allPairs.map(([key, s]) => ({ ...s, id: key }));
+      const videosToShow = activeLvl.size > 0
+        ? baseVideos.filter(s => activeLvl.has(levels[s.id]))
+        : baseVideos;
+
+      mainHeader.innerHTML =
+        `<span class="stars-main-title">${currentGroupName}</span>` +
+        `<span class="stars-main-count">${videosToShow.length} video${videosToShow.length !== 1 ? 's' : ''}</span>`;
+
+      if (!videosToShow.length) {
+        const empty = document.createElement('div');
+        empty.id = 'stars-empty';
+        empty.innerHTML = activeGroupId === 'all'
+          ? 'No starred videos yet.<br>Click ★ on any video in Likes, Favorites, or Following.'
+          : 'No videos in this group yet.<br>Star videos and use ⊕ to add them here.';
+        grid.appendChild(empty);
+      } else {
+        videosToShow.forEach(star => {
+          const { desc, authorName } = getVideoInfo(star.id);
+          grid.appendChild(buildStarsGridCard(star, authorName, desc));
+        });
+      }
     }
 
     mainArea.appendChild(grid);
@@ -2224,35 +2235,37 @@ render();
       /* ── Overlay lvl button ── */
       .overlay-lvl-btn { font-size:11px; font-weight:700; letter-spacing:.5px; }
 
-      /* ── Stars sidebar lvl section ── */
-      #stars-lvl-section { margin-bottom:4px; }
-      #stars-lvl-label {
-        padding:6px 10px 4px; font-size:11px; font-weight:700; color:#666;
-        letter-spacing:.5px; text-transform:uppercase;
-      }
+      /* ── Stars sidebar lvl numbered filter ── */
       #stars-lvl-grid {
-        display:grid; grid-template-columns:repeat(2,1fr); gap:5px;
-        padding:0 6px 8px;
+        display:grid; grid-template-columns:repeat(4,1fr); gap:4px;
+        padding:2px 6px 8px;
       }
-      .stars-lvl-card {
-        position:relative; aspect-ratio:9/16; border-radius:6px; overflow:hidden;
-        cursor:pointer; border:2px solid transparent; background:#1a1a1a;
-        transition:border-color .15s;
+      .stars-lvl-btn {
+        background:#1e1e1e; border:1px solid #3a3a3a; border-radius:4px;
+        color:#bbb; font-size:12px; font-weight:600; padding:4px 0;
+        cursor:pointer; transition:background .1s, color .1s, border-color .1s;
       }
-      .stars-lvl-card:hover { border-color:#666; }
-      .stars-lvl-card.active { border-color:#fe2c55; }
-      .stars-lvl-card-img { width:100%; height:100%; object-fit:cover; display:block; }
-      .stars-lvl-card-badge {
-        position:absolute; bottom:5px; left:0; right:0; text-align:center;
-        font-size:17px; font-weight:800; color:#fff;
-        text-shadow:0 1px 6px rgba(0,0,0,1);
+      .stars-lvl-btn:hover  { background:#2a2a2a; color:#fff; }
+      .stars-lvl-btn.active { background:#fe2c55; border-color:#fe2c55; color:#fff; }
+
+      /* ── Lvl groups main-area cards ── */
+      #stars-grid:has(.stars-lvl-group-card) { grid-template-columns: repeat(auto-fill, minmax(130px,1fr)); }
+      .stars-lvl-group-card {
+        position:relative; aspect-ratio:9/16; border-radius:8px; overflow:hidden;
+        cursor:pointer; background:#1a1a1a; transition:transform .15s;
       }
-      .stars-lvl-card-count {
-        position:absolute; top:4px; right:4px; font-size:10px; font-weight:600;
-        color:rgba(255,255,255,.8); background:rgba(0,0,0,.55); border-radius:3px;
-        padding:1px 4px;
+      .stars-lvl-group-card:hover { transform:scale(1.03); }
+      .stars-lvl-group-img { width:100%; height:100%; object-fit:cover; display:block; }
+      .stars-lvl-group-badge {
+        position:absolute; bottom:28px; left:0; right:0; text-align:center;
+        font-size:32px; font-weight:900; color:#fff;
+        text-shadow:0 2px 8px rgba(0,0,0,1);
       }
-      .stars-lvl-empty { padding:4px 10px 8px; font-size:12px; color:#555; }
+      .stars-lvl-group-count {
+        position:absolute; bottom:8px; left:0; right:0; text-align:center;
+        font-size:11px; font-weight:600; color:rgba(255,255,255,.8);
+        text-shadow:0 1px 4px rgba(0,0,0,.9);
+      }
 
       /* ── Video overlay (unified player) ── */
       #video-overlay {
