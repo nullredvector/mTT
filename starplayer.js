@@ -784,14 +784,15 @@
     playerOpen = true;
 
     if (isMobilePlayer()) {
-      // Mobile: collect video IDs FIRST while <main> is still visible.
-      // Tab-switching while <main> is hidden causes React to re-render into a
-      // hidden container → memory pressure → mobile page crash.
+      // Mobile: show the player-view immediately as a loading screen (position:fixed
+      // covers everything visually) WITHOUT hiding <main>. This lets React continue
+      // re-rendering <main> during tab-switching in buildVideoList without memory
+      // pressure or crashes. After collection, swap the loading screen for the feed.
       document.querySelector('nav .player-tab')?.classList.add('active');
+      showMobilePlayerLoading();
       playerVideoList = await buildVideoList();
-      if (!playerOpen) return; // user tapped another tab during collection
+      if (!playerOpen) { hideMobilePlayerView(); return; }
       playerColumnOffsets = [0];
-      showMobilePlayerView();
       renderMobilePlayerContent();
     } else {
       // Desktop: show overlay immediately (loading state), then fill it.
@@ -813,31 +814,31 @@
     document.querySelector('nav .player-tab')?.classList.remove('active');
   }
 
-  function showMobilePlayerView() {
-    document.querySelector('main')?.style.setProperty('display', 'none');
-    toggleBtn.style.display = 'none';
+  // Show #player-view immediately as a fixed loading screen.
+  // Does NOT hide <main> — the fixed overlay covers it visually,
+  // and keeping <main> in the normal display state lets React re-render
+  // freely during buildVideoList tab-switching (avoids mobile page crashes).
+  function showMobilePlayerLoading() {
     closePanel();
-    const main = document.querySelector('main');
     if (!playerViewEl) {
       playerViewEl = document.createElement('div');
       playerViewEl.id = 'player-view';
-      main?.parentNode.insertBefore(playerViewEl, main);
+      document.body.appendChild(playerViewEl);
     }
-    playerViewEl.style.display = 'flex';
     playerViewEl.innerHTML = '';
-    // Show a loading state immediately
+    playerViewEl.style.display = 'flex';
     const loading = document.createElement('div');
     loading.id = 'player-view-loading';
-    loading.textContent = 'Loading…';
+    loading.textContent = 'Loading videos…';
     playerViewEl.appendChild(loading);
   }
 
   function hideMobilePlayerView() {
     if (!playerViewEl) return;
+    // Pause any playing videos before hiding
+    playerViewEl.querySelectorAll('video').forEach(v => v.pause());
     playerViewEl.style.display = 'none';
     playerViewEl.innerHTML = '';
-    document.querySelector('main')?.style.removeProperty('display');
-    toggleBtn.style.display = '';
   }
 
   function renderMobilePlayerContent() {
@@ -857,6 +858,15 @@
     const counter = document.createElement('span');
     counter.id = 'player-counter';
     header.appendChild(counter);
+
+    if (!playerVideoList.length) {
+      const empty = document.createElement('div');
+      empty.id = 'player-view-loading';
+      empty.textContent = 'No videos found.';
+      playerViewEl.appendChild(header);
+      playerViewEl.appendChild(empty);
+      return;
+    }
 
     playerViewEl.appendChild(header);
     renderMobileScrollFeed(playerViewEl);
@@ -1765,10 +1775,15 @@ render();
         /* ── Hide star bubble on mobile ── */
         #star-toggle { display: none !important; }
 
-        /* ── Mobile player: tab-view (no overlay) ── */
+        /* ── Mobile player: fixed full-screen view (display toggled via JS) ── */
         #player-view {
           position: fixed; inset: 0; bottom: 62px; z-index: 3000;
-          background: #0d0d0d; flex-direction: column; display: none;
+          background: #0d0d0d; flex-direction: column;
+          /* display controlled entirely by JS (style.display = 'flex' / 'none') */
+        }
+        #player-view-loading {
+          flex: 1; display: flex; align-items: center; justify-content: center;
+          color: #666; font-size: 15px;
         }
         #player-view-header {
           display: flex; align-items: center; gap: 10px;
@@ -1779,8 +1794,8 @@ render();
           background: none; border: 1px solid #444; border-radius: 4px;
           color: #ccc; cursor: pointer; padding: 5px 10px; font-size: 13px;
         }
-        #player-view #player-counter { font-size: 12px; color: #666; }
-        #player-view #player-feed { flex: 1; }
+        #player-view #player-counter { font-size: 12px; color: #666; flex: 1; text-align: center; }
+        #player-view #player-feed { flex: 1; min-height: 0; }
 
         /* ── Hide Explain nav tab on mobile ── */
         nav > div.explain-tab { display: none !important; }
