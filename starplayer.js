@@ -90,16 +90,16 @@
   function getVideoInfo(videoId) {
     const E = window.E;
     if (!E) return { desc: '', authorName: '' };
+
+    // Description lives in E.videoDescriptions keyed by videoId (directly, not via E.videos)
+    const desc = (E.videoDescriptions && E.videoDescriptions[videoId]) || '';
+
+    // Author: look up via E.videos[id].authorId → E.authors[authorId]
     const v = E.videos && E.videos[videoId];
-    if (!v) return { desc: '', authorName: '' };
-    const a = E.authors && E.authors[v.authorId];
-    const desc = v.desc
-      || (E.videoDescriptions && E.videoDescriptions[videoId])
-      || '';
-    return {
-      desc,
-      authorName: (a && (a.uniqueIds?.[0] || a.nicknames?.[0])) || '',
-    };
+    const a = v && E.authors && E.authors[v.authorId];
+    const authorName = (a && (a.uniqueIds?.[0] || a.nicknames?.[0])) || '';
+
+    return { desc, authorName };
   }
 
   function tabForCover(coverSrc) {
