@@ -91,6 +91,17 @@
     const id = String(videoId);
     const mftt = window._mftt;
 
+    // One-time debug dump — remove once caption is working
+    if (!getVideoInfo._debugged) {
+      getVideoInfo._debugged = true;
+      const data = mftt && mftt._c && mftt._c[0] && mftt._c[0].data;
+      console.log('[sp] _mftt keys:', mftt ? Object.keys(mftt) : 'no _mftt');
+      console.log('[sp] _mftt.dbvd type:', mftt && typeof mftt.dbvd, '| sample:', mftt && mftt.dbvd && JSON.stringify(Object.entries(mftt.dbvd).slice(0,2)));
+      console.log('[sp] _c[0].data keys:', data ? Object.keys(data) : 'no data');
+      console.log('[sp] looking up videoId:', id);
+      if (data && data.videoDescriptions) console.log('[sp] data.videoDescriptions sample:', JSON.stringify(Object.entries(data.videoDescriptions).slice(0,2)));
+    }
+
     // Description: captured from window.dbvd assignment in db.js
     const dbvd = mftt && mftt.dbvd;
     const desc = (dbvd && (dbvd[id] || dbvd[videoId])) || '';
