@@ -2,14 +2,17 @@
   'use strict';
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // PERSISTENCE
+  // PERSISTENCE  (server-first with localStorage fallback)
   // ═══════════════════════════════════════════════════════════════════════════
 
   const STARS_KEY  = 'myfavett_stars_v1';
   const GROUPS_KEY = 'myfavett_groups_v1';
   const OLD_KEY    = 'myfavett_favorites_v1';
 
-  function loadStars() {
+  let serverAvailable = false;
+  let _syncTimer      = null;
+
+  function loadStarsLocal() {
     try {
       const v = localStorage.getItem(STARS_KEY);
       if (v) return JSON.parse(v);
@@ -24,16 +27,48 @@
     return {};
   }
 
-  function loadGroups() {
+  function loadGroupsLocal() {
     try { return JSON.parse(localStorage.getItem(GROUPS_KEY) || '[]'); }
     catch (_) { return []; }
   }
 
-  function saveStars()  { localStorage.setItem(STARS_KEY,  JSON.stringify(stars)); }
-  function saveGroups() { localStorage.setItem(GROUPS_KEY, JSON.stringify(groups)); }
+  function saveStarsLocal()  { try { localStorage.setItem(STARS_KEY,  JSON.stringify(stars)); } catch (_) {} }
+  function saveGroupsLocal() { try { localStorage.setItem(GROUPS_KEY, JSON.stringify(groups)); } catch (_) {} }
 
-  let stars  = loadStars();
-  let groups = loadGroups();
+  function syncToServer() {
+    if (!serverAvailable) return;
+    clearTimeout(_syncTimer);
+    _syncTimer = setTimeout(() => {
+      fetch('/api/stars', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stars, groups }),
+      }).catch(() => {});
+    }, 300);
+  }
+
+  function saveStars()  { saveStarsLocal();  syncToServer(); }
+  function saveGroups() { saveGroupsLocal(); syncToServer(); }
+
+  let stars  = loadStarsLocal();
+  let groups = loadGroupsLocal();
+
+  // Attempt to load from server (async, upgrades data on success)
+  (function initServerSync() {
+    fetch('/api/stars').then(r => {
+      if (!r.ok) throw new Error(r.status);
+      return r.json();
+    }).then(data => {
+      serverAvailable = true;
+      stars  = data.stars  || {};
+      groups = data.groups || [];
+      saveStarsLocal();
+      saveGroupsLocal();
+      refreshAllButtons();
+      updateToggleBtn();
+      if (starsTabActive) renderStarsView();
+    }).catch(() => { /* no server — localStorage is fine */ });
+  })();
 
   // ═══════════════════════════════════════════════════════════════════════════
   // HELPERS
@@ -135,7 +170,41 @@
 
   function scanCards() {
     document.querySelectorAll('div.cover').forEach(injectOrUpdateButton);
+    document.querySelectorAll('div.cover').forEach(interceptCoverClick);
     applyMobileCards();
+  }
+
+  // Intercept thumbnail clicks to open our overlay instead of React's player
+  function interceptCoverClick(coverDiv) {
+    if (coverDiv._overlayBound) return;
+    coverDiv._overlayBound = true;
+    coverDiv.addEventListener('click', e => {
+      // Don't intercept star button clicks
+      if (e.target.closest('.star-btn')) return;
+      e.stopPropagation();
+      e.preventDefault();
+      const img = coverDiv.querySelector('img.thumbnail');
+      const src = img && img.getAttribute('src');
+      const videoId = getVideoIdFromSrc(src);
+      if (!videoId || !src) return;
+      // Build context list from currently visible thumbnails
+      const contextList = buildContextFromDOM();
+      const idx = contextList.findIndex(v => v.id === videoId);
+      openVideoOverlay(idx >= 0 ? idx : 0, contextList);
+    }, true); // capture phase to beat React
+  }
+
+  function buildContextFromDOM() {
+    const list = [];
+    const seen = new Set();
+    document.querySelectorAll('div.cover img.thumbnail').forEach(img => {
+      const src = img.getAttribute('src');
+      const id  = getVideoIdFromSrc(src);
+      if (!id || seen.has(id)) return;
+      seen.add(id);
+      list.push({ id, coverSrc: src, videoPath: getVideoPath(src) });
+    });
+    return list;
   }
 
   function applyMobileCards() {
@@ -174,7 +243,28 @@
       cap.className = 'sp-cap';
       cap.textContent = txt;
       coverDiv.appendChild(cap);
+
+      // Add metadata overlay (like count, date) for card view
+      if (!coverDiv.querySelector('.sp-meta')) {
+        const E = window.E;
+        const v = E && E.videos && E.videos[videoId];
+        if (v) {
+          const meta = document.createElement('div');
+          meta.className = 'sp-meta';
+          const parts = [];
+          if (v.diggCount != null) parts.push('♥ ' + formatCount(v.diggCount));
+          if (v.createTime) {
+            const d = new Date(v.createTime * 1000);
+            parts.push(d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }));
+          }
+          meta.textContent = parts.join('  ·  ');
+          coverDiv.appendChild(meta);
+        }
+      }
     });
+
+    // Reposition rows into 2-column grid
+    applyMobileGridLayout();
 
     // Mark and hide "Explain" nav tab on mobile (app.js renders it; useless on mobile)
     document.querySelectorAll('nav > div').forEach(div => {
@@ -190,28 +280,243 @@
     });
   }
 
+  function formatCount(n) {
+    if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+    if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+    return String(n);
+  }
+
+  // Reposition react-window's absolutely-positioned rows into a 2-column card grid
+  function applyMobileGridLayout() {
+    if (window.innerWidth >= 768) return;
+
+    // Find the virtualized list container — the element with position:relative
+    // that holds absolutely-positioned row children
+    const main = document.querySelector('main');
+    if (!main) return;
+
+    // The react-window container is deeply nested: main > div > div[style*="position: relative"]
+    const container = main.querySelector('[style*="position: relative"]');
+    if (!container) return;
+
+    const rows = Array.from(container.children).filter(el => {
+      // Only process video rows (skip info banner and header, which are the first 2 items)
+      return el.querySelector('div.cover');
+    });
+
+    if (rows.length === 0) return;
+
+    const gap = 6;
+    const colWidth = 'calc(50% - ' + (gap / 2) + 'px)';
+    const cardHeight = Math.round(window.innerWidth / 2 * 16 / 9); // 9:16 aspect ratio per half-width
+
+    rows.forEach((row, i) => {
+      const col = i % 2;
+      const gridRow = Math.floor(i / 2);
+
+      row.style.setProperty('width', colWidth, 'important');
+      row.style.setProperty('left', col === 0 ? '0px' : `calc(50% + ${gap / 2}px)`, 'important');
+      row.style.setProperty('top', (gridRow * (cardHeight + gap)) + 'px', 'important');
+      row.style.setProperty('height', cardHeight + 'px', 'important');
+      row.classList.add('mobile-card-row');
+    });
+
+    // Adjust container height to fit grid
+    const totalGridRows = Math.ceil(rows.length / 2);
+    const totalHeight = totalGridRows * (cardHeight + gap);
+    container.style.setProperty('height', totalHeight + 'px', 'important');
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   // OPEN VIDEO (from panel or Stars tab)
   // ═══════════════════════════════════════════════════════════════════════════
 
   function openVideo(coverSrc) {
     closePanel();
-    if (starsTabActive) showMainContent();
+    const videoId = getVideoIdFromSrc(coverSrc);
+    if (!videoId) return;
+    const contextList = [{ id: videoId, coverSrc, videoPath: getVideoPath(coverSrc) }];
+    // Try to build a richer context from Stars if we're in Stars view
+    if (starsTabActive) {
+      const starList = Object.values(stars);
+      if (starList.length > 0) {
+        contextList.length = 0;
+        starList.forEach(s => contextList.push({ id: s.id, coverSrc: s.coverSrc, videoPath: getVideoPath(s.coverSrc) }));
+      }
+    }
+    const idx = contextList.findIndex(v => v.id === videoId);
+    openVideoOverlay(idx >= 0 ? idx : 0, contextList);
+  }
 
-    const appTab = tabForCover(coverSrc);
-    if (appTab) {
-      const tabEl = document.querySelector(`nav div.${appTab}`);
-      if (tabEl) tabEl.click();
+  // ═══════════════════════════════════════════════════════════════════════════
+  // VIDEO OVERLAY PLAYER
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  let overlayEl      = null;
+  let overlayCtx     = [];    // context list of { id, coverSrc, videoPath }
+  let overlayIdx     = 0;
+  let overlayVideo   = null;
+  let overlayMuted   = true;
+
+  function openVideoOverlay(startIdx, contextList) {
+    closeVideoOverlay();
+    overlayCtx = contextList;
+    overlayIdx = startIdx;
+    overlayMuted = true;
+
+    overlayEl = document.createElement('div');
+    overlayEl.id = 'video-overlay';
+    overlayEl.setAttribute('tabindex', '0');
+
+    // Backdrop click closes
+    overlayEl.addEventListener('click', e => {
+      if (e.target === overlayEl) closeVideoOverlay();
+    });
+
+    // Close button
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'overlay-close';
+    closeBtn.textContent = '✕';
+    closeBtn.addEventListener('click', closeVideoOverlay);
+    overlayEl.appendChild(closeBtn);
+
+    // Content container
+    const content = document.createElement('div');
+    content.id = 'video-overlay-content';
+    overlayEl.appendChild(content);
+
+    // Keyboard
+    overlayEl.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { closeVideoOverlay(); return; }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowRight') { navigateOverlay(1); return; }
+      if (e.key === 'ArrowUp'   || e.key === 'ArrowLeft')  { navigateOverlay(-1); return; }
+    });
+
+    // Swipe (mobile)
+    let _sy = 0;
+    overlayEl.addEventListener('touchstart', e => { _sy = e.touches[0].clientY; }, { passive: true });
+    overlayEl.addEventListener('touchend', e => {
+      const dy = _sy - e.changedTouches[0].clientY;
+      if (Math.abs(dy) < 50) return;
+      navigateOverlay(dy > 0 ? 1 : -1);
+    }, { passive: true });
+
+    document.body.appendChild(overlayEl);
+    renderOverlayContent();
+    overlayEl.focus();
+  }
+
+  function closeVideoOverlay() {
+    if (!overlayEl) return;
+    if (overlayVideo) { overlayVideo.pause(); overlayVideo.src = ''; }
+    overlayEl.remove();
+    overlayEl = null;
+    overlayVideo = null;
+    overlayCtx = [];
+    // If player tab was active, deactivate it
+    if (playerOpen) {
+      playerOpen = false;
+      document.querySelector('nav .player-tab')?.classList.remove('active');
+    }
+  }
+
+  function navigateOverlay(dir) {
+    const next = overlayIdx + dir;
+    if (next < 0 || next >= overlayCtx.length) return;
+    overlayIdx = next;
+    renderOverlayContent();
+  }
+
+  function renderOverlayContent() {
+    if (!overlayEl) return;
+    const content = overlayEl.querySelector('#video-overlay-content');
+    if (!content) return;
+
+    // Pause old video
+    if (overlayVideo) { overlayVideo.pause(); overlayVideo.src = ''; }
+    content.innerHTML = '';
+
+    const item = overlayCtx[overlayIdx];
+    if (!item) return;
+
+    const { desc, authorName } = getVideoInfo(item.id);
+
+    // Video
+    const video = document.createElement('video');
+    video.src = item.videoPath;
+    video.muted = overlayMuted;
+    video.autoplay = true;
+    video.playsInline = true;
+    video.poster = item.coverSrc;
+    video.className = 'overlay-video';
+    video.addEventListener('playing', () => { video.poster = ''; }, { once: true });
+    video.addEventListener('ended', () => { video.currentTime = 0; video.play().catch(() => {}); });
+    content.appendChild(video);
+    overlayVideo = video;
+
+    // Controls layer
+    const controls = document.createElement('div');
+    controls.className = 'overlay-controls-layer';
+
+    // Right center: star + group
+    const rightCenter = document.createElement('div');
+    rightCenter.className = 'overlay-right-center';
+
+    const starBtn = document.createElement('button');
+    starBtn.className = 'overlay-ctrl-btn overlay-star-btn' + (stars[item.id] ? ' active' : '');
+    starBtn.innerHTML = '★';
+    starBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      toggleStar(item.id, item.coverSrc);
+      starBtn.classList.toggle('active', Boolean(stars[item.id]));
+    });
+    rightCenter.appendChild(starBtn);
+
+    const groupBtn = document.createElement('button');
+    groupBtn.className = 'overlay-ctrl-btn overlay-group-btn';
+    groupBtn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>';
+    groupBtn.addEventListener('click', e => { e.stopPropagation(); showGroupPicker(groupBtn, item.id); });
+    rightCenter.appendChild(groupBtn);
+    controls.appendChild(rightCenter);
+
+    // Bottom-left: author + caption
+    const meta = document.createElement('div');
+    meta.className = 'overlay-meta';
+    if (authorName) {
+      const authEl = document.createElement('div');
+      authEl.className = 'overlay-author';
+      authEl.textContent = '@' + authorName;
+      meta.appendChild(authEl);
+    }
+    if (desc) {
+      const capEl = document.createElement('div');
+      capEl.className = 'overlay-caption';
+      capEl.textContent = desc.length > 150 ? desc.slice(0, 150) + '…' : desc;
+      meta.appendChild(capEl);
+    }
+    controls.appendChild(meta);
+
+    // Bottom-right: mute
+    const muteBtn = document.createElement('button');
+    muteBtn.className = 'overlay-ctrl-btn overlay-mute-btn';
+    muteBtn.innerHTML = muteIcon(overlayMuted);
+    muteBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      overlayMuted = !overlayMuted;
+      video.muted = overlayMuted;
+      muteBtn.innerHTML = muteIcon(overlayMuted);
+    });
+    controls.appendChild(muteBtn);
+
+    // Counter (subtle)
+    if (overlayCtx.length > 1) {
+      const counter = document.createElement('div');
+      counter.className = 'overlay-counter';
+      counter.textContent = `${overlayIdx + 1} / ${overlayCtx.length}`;
+      controls.appendChild(counter);
     }
 
-    setTimeout(() => {
-      let found = null;
-      document.querySelectorAll('img.thumbnail').forEach(img => {
-        if (img.getAttribute('src') === coverSrc) found = img;
-      });
-      if (found) found.click();
-      else window.open(getVideoPath(coverSrc));
-    }, 300);
+    content.appendChild(controls);
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -788,32 +1093,29 @@
     if (starsTabActive) showMainContent();
     playerOpen = true;
 
+    document.querySelector('nav .player-tab')?.classList.add('active');
+
     if (isMobilePlayer()) {
-      // Mobile: show the player-view immediately as a loading screen (position:fixed
-      // covers everything visually) WITHOUT hiding <main>. This lets React continue
-      // re-rendering <main> during tab-switching in buildVideoList without memory
-      // pressure or crashes. After collection, swap the loading screen for the feed.
-      document.querySelector('nav .player-tab')?.classList.add('active');
+      // Mobile: show loading screen, build list, then scroll-snap feed
       showMobilePlayerLoading();
       playerVideoList = await buildVideoList();
       if (!playerOpen) { hideMobilePlayerView(); return; }
       playerColumnOffsets = [0];
       renderMobilePlayerContent();
     } else {
-      // Desktop: show overlay immediately (loading state), then fill it.
-      playerColumnOffsets = Array.from({ length: numCols() }, (_, i) => i);
-      renderPlayerOverlay();
-      document.querySelector('nav .player-tab')?.classList.add('active');
+      // Desktop: build list then open first video in overlay
       playerVideoList = await buildVideoList();
-      if (playerOpen) {
-        playerColumnOffsets = Array.from({ length: numCols() }, (_, i) => i);
-        renderPlayerOverlay();
+      if (!playerOpen) return;
+      playerColumnOffsets = Array.from({ length: numCols() }, (_, i) => i);
+      if (playerVideoList.length > 0) {
+        openVideoOverlay(0, playerVideoList);
       }
     }
   }
 
   function closePlayer() {
     playerOpen = false;
+    closeVideoOverlay();
     document.getElementById('player-overlay')?.remove();
     hideMobilePlayerView();
     document.querySelector('nav .player-tab')?.classList.remove('active');
@@ -1288,61 +1590,53 @@
   // ═══════════════════════════════════════════════════════════════════════════
 
   function popoutPlayer() {
-    const cols = numCols();
-    const w = cols * 390 + 2;
     const win = window.open(
       'about:blank', 'myfavett-player',
-      `width=${w},height=740,resizable=yes,menubar=no,toolbar=no,location=no,status=no`
+      'width=360,height=640,resizable=yes,menubar=no,toolbar=no,location=no,status=no'
     );
     if (!win) { alert('Pop-out was blocked. Please allow pop-ups for this file and try again.'); return; }
 
     const safeJson = obj => JSON.stringify(obj).replace(/<\/script>/gi, '<\\/script>');
+    const playerOffset = playerColumnOffsets[0] || 0;
 
     win.document.write(`<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
-<title>Player — myfaveTT</title>
+<title>myfaveTT</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{height:100%;overflow:hidden;background:#111;color:#ddd;font-family:system-ui,sans-serif}
-body{display:flex;flex-direction:column}
-#ph{display:flex;align-items:center;gap:8px;padding:8px 14px;background:#1a1a1a;border-bottom:1px solid #333;flex-shrink:0}
-#ph-title{font-size:14px;font-weight:600;flex:1;text-align:center}
-#ph-counter{font-size:12px;color:#666;min-width:80px;text-align:center}
-.pnb{background:none;border:1px solid #444;border-radius:4px;color:#ccc;cursor:pointer;padding:4px 12px;font-size:15px;line-height:1}
-.pnb:hover{background:#2a2a2a}.pnb:disabled{opacity:.3;cursor:default}
-#ps{flex:1;display:flex;min-height:0}
-.pc{flex:1;position:relative;background:#000;border-right:1px solid #1a1a1a;overflow:hidden}
-.pc:last-child{border-right:none}
-.pv{width:100%;height:100%;object-fit:contain;display:block}
-.pctl{position:absolute;inset:0;pointer-events:none}
-.prc{position:absolute;right:12px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:12px;pointer-events:auto;align-items:center}
-.pb{background:rgba(0,0,0,.6);border:none;border-radius:50%;color:#ddd;width:44px;height:44px;font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s,transform .1s;pointer-events:auto}
-.pb:hover{background:rgba(0,0,0,.85);transform:scale(1.1)}
-.pb.on{color:gold}
-.pa{position:absolute;bottom:14px;left:14px;font-size:13px;font-weight:500;text-shadow:0 1px 4px rgba(0,0,0,.9);pointer-events:none}
-.pm{position:absolute;bottom:10px;right:10px;pointer-events:auto}
-#gp{position:fixed;background:#252525;border:1px solid #555;border-radius:6px;padding:6px 0;min-width:160px;box-shadow:0 4px 16px rgba(0,0,0,.7);z-index:999}
-.gpr{display:flex;align-items:center;gap:8px;padding:6px 14px;font-size:13px;cursor:pointer}
-.gpr:hover{background:#333}
+html,body{height:100%;overflow:hidden;background:#000;color:#ddd;font-family:system-ui,sans-serif}
+body{position:relative}
+video{width:100%;height:100%;object-fit:contain;display:block}
+.ctl{position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .2s}
+body:hover .ctl{opacity:1}
+.close{position:absolute;top:10px;right:10px;background:rgba(0,0,0,.5);border:none;border-radius:50%;color:#fff;width:32px;height:32px;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;pointer-events:auto}
+.close:hover{background:rgba(0,0,0,.8)}
+.rc{position:absolute;right:10px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:10px;pointer-events:auto;align-items:center}
+.b{background:rgba(0,0,0,.5);border:none;border-radius:50%;color:#ddd;width:40px;height:40px;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s;pointer-events:auto}
+.b:hover{background:rgba(0,0,0,.8)}
+.b.on{color:gold}
+.au{position:absolute;bottom:12px;left:12px;font-size:12px;font-weight:500;text-shadow:0 1px 4px rgba(0,0,0,.9);pointer-events:none;max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cap{position:absolute;bottom:28px;left:12px;font-size:11px;color:rgba(255,255,255,.8);text-shadow:0 1px 3px rgba(0,0,0,.8);pointer-events:none;max-width:65%;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.mu{position:absolute;bottom:10px;right:10px;pointer-events:auto}
+.ct{position:absolute;top:10px;left:50%;transform:translateX(-50%);font-size:11px;color:rgba(255,255,255,.35);pointer-events:none}
 </style></head><body>
-<div id="ph">
-  <button class="pnb" id="pp">&#8592;</button>
-  <span id="ph-counter"></span>
-  <span id="ph-title">Player — myfaveTT</span>
-  <span id="ph-counter2"></span>
-  <button class="pnb" id="pn">&#8594;</button>
+<video id="v" muted autoplay playsinline></video>
+<div class="ctl" id="c">
+  <button class="close" id="x">✕</button>
+  <div class="rc" id="rc"></div>
+  <div class="au" id="au"></div>
+  <div class="cap" id="cp"></div>
+  <div class="ct" id="ct"></div>
+  <button class="b mu" id="mb"></button>
 </div>
-<div id="ps"></div>
 <script>
 const SK='myfavett_stars_v1',GK='myfavett_groups_v1';
 let vids=${safeJson(playerVideoList)};
-let off=${playerOffset};
+let idx=${playerOffset};
+let muted=true;
 
-function nc(){return window.innerWidth<768?1:3}
 function ls(){try{return JSON.parse(localStorage.getItem(SK)||'{}')}catch(_){return{}}}
 function ss(s){localStorage.setItem(SK,JSON.stringify(s))}
-function lg(){try{return JSON.parse(localStorage.getItem(GK)||'[]')}catch(_){return[]}}
-function sg(g){localStorage.setItem(GK,JSON.stringify(g))}
 
 function mi(m){
   return m
@@ -1350,108 +1644,49 @@ function mi(m){
     : '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>';
 }
 
-function ci(){
-  const cols=nc(),total=vids.length,end=Math.min(off+cols,total);
-  const txt=total?(off+1)+'\u2013'+end+' / '+total:'No videos';
-  document.getElementById('ph-counter').textContent=txt;
-  document.getElementById('ph-counter2').textContent='';
-  document.getElementById('pp').disabled=off===0;
-  document.getElementById('pn').disabled=off+cols>=total;
-}
-
 function render(){
-  const cols=nc(),total=vids.length;
-  const stage=document.getElementById('ps');
-  stage.querySelectorAll('video').forEach(v=>{v.pause();v.src='';});
-  stage.innerHTML='';
-  ci();
-  for(let i=0;i<cols;i++){
-    const idx=off+i;
-    const col=document.createElement('div');
-    col.className='pc';
-    if(idx>=total){stage.appendChild(col);continue;}
-    const item=vids[idx];
-    const curStars=ls();
+  const v=document.getElementById('v');
+  v.pause();
+  const item=vids[idx]; if(!item)return;
+  v.poster=item.coverSrc; v.src=item.videoPath; v.muted=muted;
+  v.play().catch(()=>{});
+  v.onended=()=>{v.currentTime=0;v.play().catch(()=>{});};
 
-    const vid=document.createElement('video');
-    vid.src=item.videoPath; vid.muted=true; vid.autoplay=true;
-    vid.loop=true; vid.playsInline=true; vid.poster=item.coverSrc;
-    vid.className='pv';
-    col.appendChild(vid);
-
-    const ctl=document.createElement('div'); ctl.className='pctl';
-
-    const rc=document.createElement('div'); rc.className='prc';
-
-    const sb=document.createElement('button');
-    sb.className='pb'+(curStars[item.id]?' on':'');
-    sb.innerHTML='★'; sb.title=curStars[item.id]?'Remove from Stars':'Add to Stars';
-    sb.addEventListener('click',e=>{
-      e.stopPropagation();
-      const s=ls();
-      if(s[item.id])delete s[item.id]; else s[item.id]={id:item.id,coverSrc:item.coverSrc};
-      ss(s);
-      sb.classList.toggle('on',Boolean(s[item.id]));
-    });
-
-    const gb=document.createElement('button');
-    gb.className='pb';
-    gb.innerHTML='<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>';
-    gb.title='Add to group';
-    gb.addEventListener('click',e=>{ e.stopPropagation(); showPicker(gb,item.id); });
-
-    rc.appendChild(sb); rc.appendChild(gb); ctl.appendChild(rc);
-
-    if(item.authorName){
-      const a=document.createElement('div'); a.className='pa';
-      a.textContent='@'+item.authorName; ctl.appendChild(a);
-    }
-
-    let muted=true;
-    const mb=document.createElement('button');
-    mb.className='pb pm'; mb.innerHTML=mi(true); mb.title='Unmute';
-    mb.addEventListener('click',e=>{
-      e.stopPropagation(); muted=!muted; vid.muted=muted;
-      mb.innerHTML=mi(muted); mb.title=muted?'Unmute':'Mute';
-    });
-    ctl.appendChild(mb);
-    col.appendChild(ctl);
-    stage.appendChild(col);
-  }
-}
-
-function showPicker(btn,videoId){
-  document.getElementById('gp')?.remove();
-  const groups=lg(); if(!groups.length)return;
-  const pk=document.createElement('div'); pk.id='gp';
-  groups.forEach(g=>{
-    const row=document.createElement('label'); row.className='gpr';
-    const cb=document.createElement('input'); cb.type='checkbox';
-    cb.checked=g.videoIds&&g.videoIds.includes(videoId);
-    cb.addEventListener('change',()=>{
-      const live=lg(); const f=live.find(x=>x.id===g.id);
-      if(f){if(cb.checked&&!f.videoIds.includes(videoId))f.videoIds.push(videoId);
-            else f.videoIds=f.videoIds.filter(i=>i!==videoId); sg(live);}
-    });
-    row.appendChild(cb); row.appendChild(document.createTextNode(' '+g.name));
-    pk.appendChild(row);
+  const curStars=ls();
+  const rc=document.getElementById('rc'); rc.innerHTML='';
+  const sb=document.createElement('button');
+  sb.className='b'+(curStars[item.id]?' on':''); sb.innerHTML='★';
+  sb.addEventListener('click',()=>{
+    const s=ls();
+    if(s[item.id])delete s[item.id]; else s[item.id]={id:item.id,coverSrc:item.coverSrc};
+    ss(s); sb.classList.toggle('on',Boolean(s[item.id]));
   });
-  const r=btn.getBoundingClientRect();
-  pk.style.top=(r.bottom+4)+'px'; pk.style.left=r.left+'px';
-  document.body.appendChild(pk);
-  setTimeout(()=>{
-    document.addEventListener('click',function h(e){
-      if(!pk.contains(e.target)){pk.remove();document.removeEventListener('click',h);}
-    });
-  },0);
+  rc.appendChild(sb);
+
+  document.getElementById('au').textContent=item.authorName?'@'+item.authorName:'';
+  document.getElementById('cp').textContent='';
+  document.getElementById('ct').textContent=vids.length>1?(idx+1)+' / '+vids.length:'';
+  document.getElementById('mb').innerHTML=mi(muted);
 }
 
-document.getElementById('pp').addEventListener('click',()=>{ off=Math.max(0,off-nc()); render(); });
-document.getElementById('pn').addEventListener('click',()=>{ off=Math.min(vids.length-nc(),off+nc()); render(); });
-document.addEventListener('keydown',e=>{
-  if(e.key==='ArrowRight') document.getElementById('pn').click();
-  if(e.key==='ArrowLeft')  document.getElementById('pp').click();
+document.getElementById('x').addEventListener('click',()=>window.close());
+document.getElementById('mb').addEventListener('click',()=>{
+  muted=!muted; document.getElementById('v').muted=muted;
+  document.getElementById('mb').innerHTML=mi(muted);
 });
+document.addEventListener('keydown',e=>{
+  if(e.key==='ArrowDown'||e.key==='ArrowRight'){if(idx<vids.length-1){idx++;render();}}
+  if(e.key==='ArrowUp'||e.key==='ArrowLeft'){if(idx>0){idx--;render();}}
+  if(e.key==='Escape')window.close();
+});
+let sy=0;
+document.addEventListener('touchstart',e=>{sy=e.touches[0].clientY},{passive:true});
+document.addEventListener('touchend',e=>{
+  const dy=sy-e.changedTouches[0].clientY;
+  if(Math.abs(dy)<50)return;
+  if(dy>0&&idx<vids.length-1){idx++;render();}
+  else if(dy<0&&idx>0){idx--;render();}
+},{passive:true});
 render();
 </script></body></html>`);
     win.document.close();
@@ -1661,6 +1896,82 @@ render();
       .stars-picker-row { display:flex; align-items:center; gap:8px; padding:6px 14px; font-size:13px; cursor:pointer; transition:background .1s; }
       .stars-picker-row:hover { background:#333; }
 
+      /* ── Video overlay (unified player) ── */
+      #video-overlay {
+        position: fixed; inset: 0; z-index: 4000;
+        background: rgba(0,0,0,0.92);
+        display: flex; align-items: center; justify-content: center;
+        cursor: default;
+      }
+      #video-overlay-content {
+        position: relative; width: 100%; max-width: 480px;
+        height: 90vh; max-height: 90vh;
+        display: flex; align-items: center; justify-content: center;
+      }
+      .overlay-video {
+        width: 100%; height: 100%; object-fit: contain; display: block;
+        border-radius: 8px;
+      }
+      .overlay-close {
+        position: absolute; top: 16px; right: 16px; z-index: 10;
+        background: rgba(0,0,0,.5); border: none; border-radius: 50%;
+        color: #fff; width: 36px; height: 36px; font-size: 18px;
+        cursor: pointer; display: flex; align-items: center; justify-content: center;
+        opacity: 0; transition: opacity .2s;
+      }
+      #video-overlay:hover .overlay-close { opacity: 1; }
+      .overlay-close:hover { background: rgba(0,0,0,.8); }
+      .overlay-controls-layer {
+        position: absolute; inset: 0; pointer-events: none;
+      }
+      .overlay-right-center {
+        position: absolute; right: 14px; top: 50%; transform: translateY(-50%);
+        display: flex; flex-direction: column; gap: 12px;
+        pointer-events: auto; align-items: center;
+      }
+      .overlay-ctrl-btn {
+        background: rgba(0,0,0,.55); border: none; border-radius: 50%;
+        color: #ddd; width: 46px; height: 46px; font-size: 20px;
+        cursor: pointer; display: flex; align-items: center; justify-content: center;
+        transition: background .15s, transform .1s; pointer-events: auto;
+        box-shadow: 0 2px 8px rgba(0,0,0,.4);
+      }
+      .overlay-ctrl-btn:hover { background: rgba(0,0,0,.8); transform: scale(1.08); }
+      .overlay-star-btn.active { color: gold; }
+      .overlay-meta {
+        position: absolute; bottom: 16px; left: 16px;
+        max-width: 55%; pointer-events: none;
+      }
+      .overlay-author {
+        font-size: 14px; font-weight: 600; color: #fff;
+        text-shadow: 0 1px 4px rgba(0,0,0,.9);
+        margin-bottom: 4px;
+      }
+      .overlay-caption {
+        font-size: 12px; color: rgba(255,255,255,.85);
+        text-shadow: 0 1px 3px rgba(0,0,0,.8);
+        line-height: 1.4; display: -webkit-box;
+        -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+      }
+      .overlay-mute-btn {
+        position: absolute; bottom: 14px; right: 14px; pointer-events: auto;
+      }
+      .overlay-counter {
+        position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+        font-size: 12px; color: rgba(255,255,255,.4); pointer-events: none;
+      }
+
+      @media (max-width: 768px) {
+        #video-overlay { align-items: stretch; }
+        #video-overlay-content {
+          max-width: 100%; width: 100%; height: 100%;
+          max-height: 100%;
+        }
+        .overlay-video { border-radius: 0; }
+        .overlay-close { opacity: 1; }
+        #video-overlay { bottom: 62px; } /* above bottom nav */
+      }
+
       /* ── Player overlay ── */
       #player-overlay {
         position: fixed; inset: 0; z-index: 3000;
@@ -1812,6 +2123,10 @@ render();
         #player-view #player-counter { font-size: 12px; color: #666; flex: 1; text-align: center; }
         #player-view #player-feed { flex: 1; min-height: 0; }
 
+        /* ── Hide header chrome on mobile (logo + search) — nav moves to bottom ── */
+        header { height: auto !important; padding: 0 !important; }
+        header > *:not(nav) { display: none !important; }
+
         /* ── Hide Explain nav tab on mobile ── */
         nav > div.explain-tab { display: none !important; }
 
@@ -1856,26 +2171,50 @@ render();
         body { padding-bottom: 62px !important; }
         /* Stars view must not slip behind nav */
         #stars-view { max-height: calc(100vh - 62px) !important; }
-        /* ── Mobile card layout for video list ── */
-        /* Stop forcing horizontal scroll — show cards instead */
+        /* ── Mobile card grid layout ── */
         main { overflow-x: hidden !important; }
         main > * { min-width: 0 !important; }
 
-        /* Cover thumbnails: taller so they feel like cards */
-        div.cover { height: 110px !important; }
+        /* Hide header row (column titles) on mobile */
+        main [style*="position: absolute"][style*="height: 40px"] { display: none !important; }
 
-        /* Hide table columns after the first text column (keep cover + 1 sibling) */
-        div.cover ~ * ~ * { display: none !important; }
+        /* Card rows: fill width, show cover as card */
+        .mobile-card-row {
+          border-radius: 8px !important; overflow: hidden !important;
+        }
+        .mobile-card-row > .text,
+        .mobile-card-row > .column-titles { display: none !important; }
+
+        /* Cover fills the card */
+        div.cover {
+          width: 100% !important; height: 100% !important;
+          border-radius: 8px !important; overflow: hidden !important;
+        }
+        div.cover img.thumbnail {
+          width: 100% !important; height: 100% !important;
+          object-fit: cover !important; border-radius: 8px !important;
+        }
+
+        /* Hide all text columns — card shows only cover + overlay */
+        div.cover ~ * { display: none !important; }
 
         /* Caption overlay injected by applyMobileCards() */
         .sp-cap {
           position: absolute; bottom: 0; left: 0; right: 0;
           background: linear-gradient(transparent, rgba(0,0,0,.85));
           color: #fff; font-size: 10px; line-height: 1.35;
-          padding: 18px 5px 5px; white-space: pre-line;
+          padding: 20px 6px 6px; white-space: pre-line;
           pointer-events: none; z-index: 5;
           overflow: hidden; display: -webkit-box;
-          -webkit-line-clamp: 4; -webkit-box-orient: vertical;
+          -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+        }
+
+        /* Metadata overlay (like count, date) */
+        .sp-meta {
+          position: absolute; top: 4px; left: 4px;
+          font-size: 9px; color: rgba(255,255,255,.7);
+          text-shadow: 0 1px 2px rgba(0,0,0,.8);
+          pointer-events: none; z-index: 5;
         }
 
         /* Explain button: hide via CSS as belt-and-suspenders */

@@ -1,8 +1,9 @@
 'use strict';
-const http = require('http');
-const fs   = require('fs');
-const path = require('path');
-const url  = require('url');
+const http     = require('http');
+const fs       = require('fs');
+const path     = require('path');
+const url      = require('url');
+const dbStars  = require('./db_stars');
 
 const ARCHIVE_DIR = process.env.ARCHIVE_DIR || '/archive';
 const PORT        = parseInt(process.env.PORT || '8080', 10);
@@ -35,6 +36,35 @@ const MIME = {
 // ── Server ──────────────────────────────────────────────────────────────────
 http.createServer((req, res) => {
   const pathname = url.parse(req.url).pathname;
+
+  // ── Stars API ──────────────────────────────────────────────────────────────
+  if (pathname === '/api/stars') {
+    if (req.method === 'GET') {
+      const data = dbStars.load();
+      const body = JSON.stringify(data);
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) });
+      res.end(body);
+      return;
+    }
+    if (req.method === 'PUT') {
+      let chunks = [];
+      req.on('data', c => chunks.push(c));
+      req.on('end', () => {
+        try {
+          const data = JSON.parse(Buffer.concat(chunks).toString());
+          dbStars.save({ stars: data.stars || {}, groups: data.groups || [] });
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end('{"ok":true}');
+        } catch (e) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end('{"error":"Invalid JSON"}');
+        }
+      });
+      return;
+    }
+    res.writeHead(405); res.end('Method not allowed'); return;
+  }
+
   const isRoot   = pathname === '/' || pathname === '/Archive.html';
 
   const filePath = isRoot

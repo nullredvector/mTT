@@ -5,6 +5,7 @@ WORKDIR /app
 # starplayer.js is baked into the image at build time
 COPY starplayer.js ./starplayer.js
 COPY server.js     ./server.js
+COPY db_stars.js   ./db_stars.js
 COPY entrypoint.sh ./entrypoint.sh
 
 RUN chmod +x /app/entrypoint.sh
