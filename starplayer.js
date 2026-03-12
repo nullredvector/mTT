@@ -94,12 +94,13 @@
     // One-time debug dump — remove once caption is working
     if (!getVideoInfo._debugged) {
       getVideoInfo._debugged = true;
-      const data = mftt && mftt._c && mftt._c[0] && mftt._c[0].data;
-      console.log('[sp] _mftt keys:', mftt ? Object.keys(mftt) : 'no _mftt');
-      console.log('[sp] _mftt.dbvd type:', mftt && typeof mftt.dbvd, '| sample:', mftt && mftt.dbvd && JSON.stringify(Object.entries(mftt.dbvd).slice(0,2)));
-      console.log('[sp] _c[0].data keys:', data ? Object.keys(data) : 'no data');
       console.log('[sp] looking up videoId:', id);
-      if (data && data.videoDescriptions) console.log('[sp] data.videoDescriptions sample:', JSON.stringify(Object.entries(data.videoDescriptions).slice(0,2)));
+      console.log('[sp] window.db  type:', typeof window.db,   '| truthy:', !!window.db);
+      console.log('[sp] window.dbvd type:', typeof window.dbvd, '| truthy:', !!window.dbvd);
+      console.log('[sp] window.E   type:', typeof window.E,    '| truthy:', !!window.E);
+      if (window.E)    console.log('[sp] window.E keys:', Object.keys(window.E));
+      if (window.db   && typeof window.db   === 'object') console.log('[sp] window.db keys:', Object.keys(window.db).slice(0,10));
+      if (window.dbvd && typeof window.dbvd === 'object') console.log('[sp] window.dbvd sample:', Object.entries(window.dbvd).slice(0,1));
     }
 
     // Description: captured from window.dbvd assignment in db.js
