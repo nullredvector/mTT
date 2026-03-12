@@ -565,6 +565,7 @@
   function openVideoOverlay(startIdx, contextList) {
     // On mobile route to the scroll-snap feed instead of the small overlay
     if (isMobilePlayer()) {
+      playerReturnTab = starsTabActive ? 'stars' : null;
       playerOpen = true;
       playerVideoList = contextList;
       playerColumnOffsets = [startIdx];
@@ -895,11 +896,12 @@
 
   let starsTabActive = false;
   let starsViewEl    = null;
-  let activeView     = null;        // null | '__lvl_groups__' | '__ungrouped__'
-  let activeGroupIds = new Set();   // empty = all stars; non-empty = union of selected groups
-  let activeLvl      = new Set();   // empty = no filter; set of numbers = multi-select
-  let lvlSectionOpen = true;
-  let groupSortOrder = 'alpha';     // 'alpha' | 'count'
+  let activeView       = null;        // null | '__lvl_groups__' | '__ungrouped__'
+  let activeGroupIds   = new Set();   // empty = all stars; non-empty = union of selected groups
+  let activeLvl        = new Set();   // empty = no filter; set of numbers = multi-select
+  let lvlSectionOpen   = true;
+  let mobileStarsLvlOpen = false;     // mobile: whether inline lvl strip is visible
+  let groupSortOrder   = 'alpha';     // 'alpha' | 'count'
   let starsContextList = [];        // mirrors the currently rendered video grid order
 
   function showStarsTab() {
@@ -1084,6 +1086,133 @@
     mainHeader.id = 'stars-main-header';
     mainArea.appendChild(mainHeader);
 
+    // ── Mobile compact header (replaces sidebar on small screens) ─────────────
+    const mobileHdr = document.createElement('div');
+    mobileHdr.id = 'stars-mobile-header';
+
+    // Title row
+    const mobileTitle = document.createElement('div');
+    mobileTitle.id = 'stars-mobile-title';
+    mobileHdr.appendChild(mobileTitle);
+
+    // Filter button row
+    const mobileFilters = document.createElement('div');
+    mobileFilters.id = 'stars-mobile-filters';
+
+    function makeFilterBtn(cls, html, title, isActive, onClick) {
+      const btn = document.createElement('button');
+      btn.className = 'stars-filter-btn ' + cls + (isActive ? ' active' : '');
+      btn.innerHTML = html;
+      btn.title = title;
+      btn.addEventListener('click', e => { e.stopPropagation(); onClick(); });
+      return btn;
+    }
+
+    // ★ All Stars
+    const isAll = activeView === null && activeGroupIds.size === 0 && activeLvl.size === 0 && !mobileStarsLvlOpen;
+    mobileFilters.appendChild(makeFilterBtn('stars-filter-all', '★', 'All Stars', isAll, () => {
+      activeView = null; activeGroupIds.clear(); activeLvl.clear(); mobileStarsLvlOpen = false; renderStarsView();
+    }));
+
+    // 👍 Liked group
+    const likedG   = groups.find(g => g.name === 'liked');
+    const likedActive = likedG ? activeGroupIds.has(likedG.id) : false;
+    const thumbUpSvg  = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z"/></svg>';
+    mobileFilters.appendChild(makeFilterBtn('stars-filter-thumb-up', thumbUpSvg, 'Liked', likedActive, () => {
+      const g = groups.find(x => x.name === 'liked');
+      if (!g) return;
+      activeView = null; activeLvl.clear(); mobileStarsLvlOpen = false;
+      if (activeGroupIds.has(g.id)) activeGroupIds.delete(g.id); else { activeGroupIds.clear(); activeGroupIds.add(g.id); }
+      renderStarsView();
+    }));
+
+    // 👎 Disliked group
+    const dislikedG   = groups.find(g => g.name === 'disliked');
+    const dislikedActive = dislikedG ? activeGroupIds.has(dislikedG.id) : false;
+    const thumbDownSvg   = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M15 3H6c-.83 0-1.54.5-1.84 1.22l-3.02 7.05c-.09.23-.14.47-.14.73v2c0 1.1.9 2 2 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L9.83 23l6.59-6.59c.36-.36.58-.86.58-1.41V5c0-1.1-.9-2-2-2zm4 0v12h4V3h-4z"/></svg>';
+    mobileFilters.appendChild(makeFilterBtn('stars-filter-thumb-down', thumbDownSvg, 'Disliked', dislikedActive, () => {
+      const g = groups.find(x => x.name === 'disliked');
+      if (!g) return;
+      activeView = null; activeLvl.clear(); mobileStarsLvlOpen = false;
+      if (activeGroupIds.has(g.id)) activeGroupIds.delete(g.id); else { activeGroupIds.clear(); activeGroupIds.add(g.id); }
+      renderStarsView();
+    }));
+
+    // lvl filter button — tap: toggle inline lvl number strip / long-press: lvl groups view
+    const lvlBtnActive = activeLvl.size > 0 || mobileStarsLvlOpen || activeView === '__lvl_groups__';
+    const lvlFilterBtn = makeFilterBtn('stars-filter-lvl', 'lvl', 'Level filter (hold for groups)', lvlBtnActive, () => {});
+    let _lvlTimer = null;
+    lvlFilterBtn.addEventListener('pointerdown', () => {
+      _lvlTimer = setTimeout(() => {
+        _lvlTimer = null;
+        mobileStarsLvlOpen = false;
+        activeView = '__lvl_groups__'; activeGroupIds.clear(); activeLvl.clear(); renderStarsView();
+      }, 500);
+    });
+    lvlFilterBtn.addEventListener('pointerup', () => {
+      if (_lvlTimer) {
+        clearTimeout(_lvlTimer); _lvlTimer = null;
+        if (mobileStarsLvlOpen || activeLvl.size > 0) {
+          mobileStarsLvlOpen = false; activeLvl.clear();
+        } else {
+          mobileStarsLvlOpen = true;
+        }
+        if (activeView === '__lvl_groups__') { activeView = null; activeGroupIds.clear(); }
+        renderStarsView();
+      }
+    });
+    lvlFilterBtn.addEventListener('pointercancel', () => { clearTimeout(_lvlTimer); _lvlTimer = null; });
+    mobileFilters.appendChild(lvlFilterBtn);
+
+    mobileHdr.appendChild(mobileFilters);
+
+    // Group pills strip (all non-system groups)
+    const nonSystemGroups = groups.filter(g => g.name !== 'liked' && g.name !== 'disliked');
+    if (nonSystemGroups.length) {
+      const groupStrip = document.createElement('div');
+      groupStrip.id = 'stars-mobile-groups';
+      const sortedNS = [...nonSystemGroups].sort((a, b) => {
+        if (groupSortOrder === 'count') return b.videoIds.length - a.videoIds.length;
+        return a.name.localeCompare(b.name);
+      });
+      sortedNS.forEach(g => {
+        const pill = document.createElement('button');
+        pill.className = 'stars-mobile-group-pill' + (activeGroupIds.has(g.id) ? ' active' : '');
+        pill.textContent = g.name + (g.videoIds.length ? ` ${g.videoIds.length}` : '');
+        pill.addEventListener('click', () => {
+          activeView = null; activeLvl.clear();
+          if (activeGroupIds.has(g.id)) activeGroupIds.delete(g.id); else activeGroupIds.add(g.id);
+          renderStarsView();
+        });
+        groupStrip.appendChild(pill);
+      });
+      mobileHdr.appendChild(groupStrip);
+    }
+
+    // Lvl number strip (visible when strip open or a lvl is already selected)
+    if (mobileStarsLvlOpen || activeLvl.size > 0) {
+      const lvlStrip = document.createElement('div');
+      lvlStrip.id = 'stars-mobile-lvl-strip';
+      for (let n = 10; n <= 23; n++) {
+        const count = Object.keys(levels).filter(id => levels[id] === n).length;
+        if (!count) continue;
+        const btn = document.createElement('button');
+        btn.className = 'stars-filter-btn stars-filter-lvl-num' + (activeLvl.has(n) ? ' active' : '');
+        btn.textContent = n;
+        btn.title = count + ' video' + (count !== 1 ? 's' : '');
+        btn.addEventListener('click', e => {
+          e.stopPropagation();
+          activeView = null;
+          if (activeLvl.has(n)) activeLvl.delete(n); else activeLvl.add(n);
+          renderStarsView();
+        });
+        lvlStrip.appendChild(btn);
+      }
+      mobileHdr.appendChild(lvlStrip);
+    }
+
+    mainArea.insertBefore(mobileHdr, mainHeader);
+
     const grid = document.createElement('div');
     grid.id = 'stars-grid';
 
@@ -1093,6 +1222,8 @@
       mainHeader.innerHTML =
         `<span class="stars-main-title">lvl</span>` +
         `<span class="stars-main-count">${occupiedLvls.length} group${occupiedLvls.length !== 1 ? 's' : ''}</span>`;
+      mobileTitle.innerHTML =
+        `<span class="stars-main-title">lvl</span><span class="stars-main-count">${occupiedLvls.length} group${occupiedLvls.length !== 1 ? 's' : ''}</span>`;
 
       if (!occupiedLvls.length) {
         const empty = document.createElement('div');
@@ -1146,6 +1277,8 @@
       mainHeader.innerHTML =
         `<span class="stars-main-title">Ungrouped</span>` +
         `<span class="stars-main-count">${videosToShow.length} video${videosToShow.length !== 1 ? 's' : ''}</span>`;
+      mobileTitle.innerHTML =
+        `<span class="stars-main-title">Ungrouped</span><span class="stars-main-count">${videosToShow.length} video${videosToShow.length !== 1 ? 's' : ''}</span>`;
 
       starsContextList = videosToShow.map(s => starItemToCtx(s.lvlOnly ? s : (stars[s.id] || s)));
       if (!videosToShow.length) {
@@ -1209,6 +1342,8 @@
       mainHeader.innerHTML =
         `<span class="stars-main-title">${titleText}</span>` +
         `<span class="stars-main-count">${videosToShow.length} video${videosToShow.length !== 1 ? 's' : ''}</span>`;
+      mobileTitle.innerHTML =
+        `<span class="stars-main-title">${titleText}</span><span class="stars-main-count">${videosToShow.length} video${videosToShow.length !== 1 ? 's' : ''}</span>`;
 
       starsContextList = videosToShow.map(s => starItemToCtx(s.lvlOnly ? s : (stars[s.id] || s)));
       if (!videosToShow.length) {
@@ -1489,6 +1624,7 @@
   let playerColumnOffsets  = [];   // one index per column, independently navigable
   let playerBuilding       = false;
   let playerViewEl         = null;  // mobile tab-view element (like starsViewEl)
+  let playerReturnTab      = null;  // tab to return to when player is closed via X button
 
   // ── Mobile tab state ───────────────────────────────────────────────────────
   const MOBILE_TABS = ['home', 'stars', 'recents', 'favs'];
@@ -2185,6 +2321,21 @@
     captionEl.className = 'player-caption';
     ctrlLayer.appendChild(captionEl);
 
+    // Close/back button — shown when player was launched from another tab (e.g. Stars)
+    if (playerReturnTab) {
+      const closeBtn = document.createElement('button');
+      closeBtn.className = 'player-ctrl-btn player-overlay-close';
+      closeBtn.textContent = '✕';
+      closeBtn.title = 'Close';
+      closeBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        closePlayer();
+        setMobileTab(playerReturnTab);
+        playerReturnTab = null;
+      });
+      ctrlLayer.appendChild(closeBtn);
+    }
+
     overlay.appendChild(ctrlLayer);
 
     // Called by IntersectionObserver each time a new slide becomes dominant
@@ -2869,6 +3020,7 @@ render();
       .stars-inline-cancel  { background:none; border:none; cursor:pointer; font-size:13px; padding:2px 4px; color:#c66; }
       #stars-main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
       #stars-main-header { display:flex; align-items:baseline; gap:10px; padding:14px 18px 10px; flex-shrink:0; border-bottom:1px solid #333; }
+      #stars-mobile-header { display: none; }
       .stars-main-title { font-size:16px; font-weight:600; }
       .stars-main-count { font-size:12px; color:#666; }
       #stars-grid { flex:1; overflow-y:auto; padding:14px 18px; display:grid; grid-template-columns:repeat(auto-fill,minmax(110px,1fr)); gap:14px; align-content:start; }
@@ -3160,28 +3312,59 @@ render();
         /* Slightly bigger touch targets */
         .player-ctrl-btn { width: 52px; height: 52px; font-size: 22px; }
         .player-col-nav-btn { width: 42px !important; height: 42px !important; font-size: 20px !important; }
-        /* Stars sidebar becomes a horizontal scrolling pill strip */
+        /* Stars: hide sidebar, show compact mobile header instead */
         #stars-view { flex-direction: column; }
-        #stars-sidebar {
-          width: 100%; flex-direction: row; flex-wrap: nowrap;
-          overflow-x: auto; overflow-y: hidden;
-          border-right: none; border-bottom: 1px solid #3a3a3a;
-          padding: 4px 8px; gap: 4px;
-        }
-        #stars-sidebar::-webkit-scrollbar { height: 3px; }
-        #stars-sidebar::-webkit-scrollbar-thumb { background: #444; border-radius: 2px; }
-        .stars-sidebar-divider { display: none; }
-        .stars-group-item {
-          white-space: nowrap; flex-shrink: 0;
-          border-radius: 20px; background: #222;
-          padding: 5px 12px;
-        }
-        .stars-group-item.active { background: #333; }
-        .stars-group-row { flex-shrink: 0; }
-        .stars-group-action { display: none; }
-        #stars-new-group-btn { margin: 2px 0; white-space: nowrap; flex-shrink: 0; }
-        #stars-main-header { padding: 10px 12px 8px; }
+        #stars-sidebar { display: none !important; }
+        #stars-main-header { display: none !important; }
         #stars-grid { padding: 10px 12px; gap: 10px; }
+
+        /* ── Mobile stars header ── */
+        #stars-mobile-header {
+          display: flex; flex-direction: column; gap: 0;
+          padding: 12px 14px 0; flex-shrink: 0;
+          border-bottom: 1px solid #2a2a2a;
+        }
+        #stars-mobile-title {
+          display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px;
+        }
+        #stars-mobile-title .stars-main-title {
+          font-size: 20px; font-weight: 700; color: #fff;
+        }
+        #stars-mobile-title .stars-main-count {
+          font-size: 13px; color: #666;
+        }
+        #stars-mobile-filters {
+          display: flex; gap: 8px; align-items: center; margin-bottom: 10px;
+        }
+        .stars-filter-btn {
+          background: #222; border: 1px solid #3a3a3a; border-radius: 8px;
+          color: #888; cursor: pointer; padding: 6px 12px;
+          font-size: 14px; font-weight: 600; line-height: 1;
+          display: flex; align-items: center; justify-content: center;
+          transition: color .15s, border-color .15s, background .15s;
+          min-width: 42px;
+        }
+        .stars-filter-btn.active { color: #fff; border-color: #fff; background: #333; }
+        .stars-filter-btn.stars-filter-thumb-up.active  { color: #4caf50; border-color: #4caf50; }
+        .stars-filter-btn.stars-filter-thumb-down.active { color: #f44336; border-color: #f44336; }
+        #stars-mobile-groups {
+          display: flex; gap: 6px; overflow-x: auto; padding-bottom: 10px;
+          scrollbar-width: none;
+        }
+        #stars-mobile-groups::-webkit-scrollbar { display: none; }
+        .stars-mobile-group-pill {
+          background: #222; border: 1px solid #3a3a3a; border-radius: 20px;
+          color: #888; cursor: pointer; padding: 4px 12px;
+          font-size: 12px; white-space: nowrap; flex-shrink: 0;
+          transition: color .15s, border-color .15s, background .15s;
+        }
+        .stars-mobile-group-pill.active { color: #fff; border-color: #555; background: #333; }
+        #stars-mobile-lvl-strip {
+          display: flex; gap: 6px; overflow-x: auto; padding-bottom: 10px;
+          scrollbar-width: none;
+        }
+        #stars-mobile-lvl-strip::-webkit-scrollbar { display: none; }
+        .stars-filter-lvl-num { min-width: 36px; padding: 5px 8px; font-size: 13px; }
 
         /* ── Hide star bubble on mobile ── */
         #star-toggle { display: none !important; }
@@ -3348,6 +3531,12 @@ render();
         #player-overlay-controls .player-mute-btn {
           position: absolute; bottom: 14px; right: 10px;
           pointer-events: auto; width: 41px; height: 41px; font-size: 18px;
+        }
+        #player-overlay-controls .player-overlay-close {
+          position: absolute; top: 10px; right: 10px;
+          pointer-events: auto; width: 36px; height: 36px; font-size: 18px;
+          background: rgba(0,0,0,0.45); border: none; color: #fff;
+          border-radius: 50%; display: flex; align-items: center; justify-content: center;
         }
         #player-overlay-controls .player-thumb-up.active  { color: #4caf50; }
         #player-overlay-controls .player-thumb-down.active { color: #f44336; }
