@@ -52,7 +52,7 @@ http.createServer((req, res) => {
       req.on('end', () => {
         try {
           const data = JSON.parse(Buffer.concat(chunks).toString());
-          dbStars.save({ stars: data.stars || {}, groups: data.groups || [] });
+          dbStars.save({ stars: data.stars || {}, groups: data.groups || [], levels: data.levels || {} });
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end('{"ok":true}');
         } catch (e) {

@@ -7,6 +7,7 @@
 
   const STARS_KEY  = 'myfavett_stars_v1';
   const GROUPS_KEY = 'myfavett_groups_v1';
+  const LEVELS_KEY = 'myfavett_levels_v1';
   const OLD_KEY    = 'myfavett_favorites_v1';
 
   let serverAvailable = false;
@@ -27,13 +28,19 @@
     return {};
   }
 
-  function loadGroupsLocal() {
+  function loadGroupsLocal()  {
     try { return JSON.parse(localStorage.getItem(GROUPS_KEY) || '[]'); }
     catch (_) { return []; }
   }
 
-  function saveStarsLocal()  { try { localStorage.setItem(STARS_KEY,  JSON.stringify(stars)); } catch (_) {} }
+  function loadLevelsLocal() {
+    try { return JSON.parse(localStorage.getItem(LEVELS_KEY) || '{}'); }
+    catch (_) { return {}; }
+  }
+
+  function saveStarsLocal()  { try { localStorage.setItem(STARS_KEY,  JSON.stringify(stars));  } catch (_) {} }
   function saveGroupsLocal() { try { localStorage.setItem(GROUPS_KEY, JSON.stringify(groups)); } catch (_) {} }
+  function saveLevelsLocal() { try { localStorage.setItem(LEVELS_KEY, JSON.stringify(levels)); } catch (_) {} }
 
   function syncToServer() {
     if (!serverAvailable) return;
@@ -42,16 +49,18 @@
       fetch('/api/stars', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stars, groups }),
+        body: JSON.stringify({ stars, groups, levels }),
       }).catch(() => {});
     }, 300);
   }
 
   function saveStars()  { saveStarsLocal();  syncToServer(); }
   function saveGroups() { saveGroupsLocal(); syncToServer(); }
+  function saveLevels() { saveLevelsLocal(); syncToServer(); }
 
   let stars  = loadStarsLocal();
   let groups = loadGroupsLocal();
+  let levels = loadLevelsLocal();
 
   // Attempt to load from server (async, upgrades data on success)
   (function initServerSync() {
@@ -62,8 +71,10 @@
       serverAvailable = true;
       stars  = data.stars  || {};
       groups = data.groups || [];
+      levels = data.levels || {};
       saveStarsLocal();
       saveGroupsLocal();
+      saveLevelsLocal();
       refreshAllButtons();
       updateToggleBtn();
       if (starsTabActive) renderStarsView();
@@ -633,7 +644,7 @@
 
     const lvlBtn = document.createElement('button');
     lvlBtn.className = 'overlay-ctrl-btn overlay-lvl-btn';
-    lvlBtn.textContent = stars[item.id]?.level != null ? String(stars[item.id].level) : 'lvl';
+    lvlBtn.textContent = levels[item.id] != null ? String(levels[item.id]) : 'lvl';
     lvlBtn.addEventListener('click', e => {
       e.stopPropagation();
       showLevelPicker(lvlBtn, item.id, newLvl => {
@@ -879,7 +890,7 @@
     lvlGrid.style.display = lvlSection._open ? 'grid' : 'none';
 
     for (let n = 10; n <= 23; n++) {
-      const count = Object.values(stars).filter(s => s.level === n).length;
+      const count = Object.keys(levels).filter(id => levels[id] === n).length;
       const btn = document.createElement('button');
       btn.className = 'stars-lvl-btn' + (activeLvl === n ? ' active' : '');
       btn.textContent = n;
@@ -971,7 +982,7 @@
       : (groups.find(g => g.id === activeGroupId)?.videoIds || [])
           .filter(id => stars[id]).map(id => stars[id]);
     const videosToShow = activeLvl != null
-      ? baseVideos.filter(s => s.level === activeLvl)
+      ? baseVideos.filter(s => levels[s.id] === activeLvl)
       : baseVideos;
 
     const mainHeader = document.createElement('div');
@@ -1101,7 +1112,7 @@
     const picker = document.createElement('div');
     picker.id = 'level-picker';
 
-    const currentLvl = stars[videoId]?.level ?? null;
+    const currentLvl = levels[videoId] ?? null;
 
     const label = document.createElement('div');
     label.id = 'level-picker-label';
@@ -1128,7 +1139,7 @@
     setBtn.className = 'level-picker-btn level-picker-set';
     setBtn.addEventListener('click', () => {
       const lvl = Number(slider.value);
-      if (stars[videoId]) { stars[videoId].level = lvl; saveStars(); }
+      levels[videoId] = lvl; saveLevels();
       onUpdate(lvl);
       picker.remove();
     });
@@ -1137,7 +1148,7 @@
     clearBtn.textContent = 'Clear';
     clearBtn.className = 'level-picker-btn level-picker-clear';
     clearBtn.addEventListener('click', () => {
-      if (stars[videoId]) { delete stars[videoId].level; saveStars(); }
+      delete levels[videoId]; saveLevels();
       onUpdate(null);
       picker.remove();
     });
@@ -1147,9 +1158,10 @@
     picker.appendChild(actions);
 
     const rect = anchorBtn.getBoundingClientRect();
-    picker.style.top  = (rect.bottom + window.scrollY + 6) + 'px';
-    picker.style.left = (rect.left   + window.scrollX - 60) + 'px';
     document.body.appendChild(picker);
+    const ph = picker.offsetHeight || 160;
+    picker.style.top  = Math.max(4, rect.top + window.scrollY - ph / 2 + rect.height / 2) + 'px';
+    picker.style.left = (rect.right + window.scrollX + 6) + 'px';
 
     setTimeout(() => {
       document.addEventListener('click', function h(e) {
@@ -2191,18 +2203,21 @@ render();
       /* ── Level picker popup ── */
       #level-picker {
         position:absolute; z-index:5000; background:#252525; border:1px solid #555;
-        border-radius:8px; padding:12px 14px; box-shadow:0 4px 20px rgba(0,0,0,.7);
-        min-width:160px; display:flex; flex-direction:column; gap:8px;
+        border-radius:8px; padding:12px 10px; box-shadow:0 4px 20px rgba(0,0,0,.7);
+        display:flex; flex-direction:row; align-items:center; gap:10px;
       }
       #level-picker-label {
         text-align:center; font-size:22px; font-weight:700; color:#fff; line-height:1;
+        min-width:26px;
       }
       #level-picker-slider {
-        width:100%; accent-color:#fe2c55; cursor:pointer;
+        writing-mode:vertical-lr; direction:rtl;
+        appearance:slider-vertical; -webkit-appearance:slider-vertical;
+        height:120px; width:28px; accent-color:#fe2c55; cursor:pointer;
       }
-      #level-picker-actions { display:flex; gap:6px; }
+      #level-picker-actions { display:flex; flex-direction:column; gap:6px; }
       .level-picker-btn {
-        flex:1; padding:5px 0; border:none; border-radius:5px; font-size:13px;
+        padding:6px 8px; border:none; border-radius:5px; font-size:12px;
         cursor:pointer; font-weight:600; transition:opacity .15s;
       }
       .level-picker-set   { background:#fe2c55; color:#fff; }

@@ -9,9 +9,9 @@ function load() {
   try {
     const raw = fs.readFileSync(STARS_FILE, 'utf8');
     const data = JSON.parse(raw);
-    return { stars: data.stars || {}, groups: data.groups || [] };
+    return { stars: data.stars || {}, groups: data.groups || [], levels: data.levels || {} };
   } catch (_) {
-    return { stars: {}, groups: [] };
+    return { stars: {}, groups: [], levels: {} };
   }
 }
 
