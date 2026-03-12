@@ -2139,8 +2139,8 @@
     rightCenter.appendChild(starBtn);
     rightCenter.appendChild(lvlBtn);
     rightCenter.appendChild(groupBtn);
-    rightCenter.appendChild(muteBtn);
     ctrlLayer.appendChild(rightCenter);
+    ctrlLayer.appendChild(muteBtn);
 
     const authorEl  = document.createElement('div');
     authorEl.className = 'player-author';
@@ -3306,6 +3306,10 @@ render();
           text-shadow: 0 1px 3px rgba(0,0,0,.8);
           max-width: 58%; line-height: 1.4;
           display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+        }
+        #player-overlay-controls .player-mute-btn {
+          position: absolute; bottom: 14px; right: 10px;
+          pointer-events: auto; width: 41px; height: 41px; font-size: 18px;
         }
 
         /* Safe area inset for iPhone home indicator */
