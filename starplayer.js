@@ -62,6 +62,12 @@
   let groups = loadGroupsLocal();
   let levels = loadLevelsLocal();
 
+  // Migrate levels that were stored inside star objects (old format)
+  Object.entries(stars).forEach(([id, s]) => {
+    if (s.level != null && levels[id] == null) { levels[id] = s.level; }
+  });
+  saveLevelsLocal();
+
   // Attempt to load from server (async, upgrades data on success)
   (function initServerSync() {
     fetch('/api/stars').then(r => {
@@ -72,6 +78,9 @@
       stars  = data.stars  || {};
       groups = data.groups || [];
       levels = data.levels || {};
+      Object.entries(stars).forEach(([id, s]) => {
+        if (s.level != null && levels[id] == null) { levels[id] = s.level; }
+      });
       saveStarsLocal();
       saveGroupsLocal();
       saveLevelsLocal();
@@ -1095,10 +1104,12 @@
       picker.appendChild(row);
     });
 
-    const rect = anchorBtn.getBoundingClientRect();
-    picker.style.top  = (rect.bottom + window.scrollY + 4) + 'px';
-    picker.style.left = (rect.left  + window.scrollX)     + 'px';
     document.body.appendChild(picker);
+    const rect = anchorBtn.getBoundingClientRect();
+    const pw = picker.offsetWidth || 160;
+    const ph = picker.offsetHeight || 120;
+    picker.style.top  = Math.max(4, rect.top + window.scrollY + rect.height / 2 - ph / 2) + 'px';
+    picker.style.left = (rect.left + window.scrollX - pw - 6) + 'px';
 
     setTimeout(() => {
       document.addEventListener('click', function h(e) {
@@ -1115,11 +1126,6 @@
 
     const currentLvl = levels[videoId] ?? null;
 
-    const label = document.createElement('div');
-    label.id = 'level-picker-label';
-    label.textContent = currentLvl != null ? String(currentLvl) : '–';
-    picker.appendChild(label);
-
     const slider = document.createElement('input');
     slider.type  = 'range';
     slider.min   = 10;
@@ -1129,17 +1135,17 @@
     slider.id    = 'level-picker-slider';
     slider.addEventListener('input', () => {
       const lvl = Number(slider.value);
-      label.textContent = String(lvl);
       levels[videoId] = lvl; saveLevels();
       onUpdate(lvl);
     });
     picker.appendChild(slider);
 
-    const rect = anchorBtn.getBoundingClientRect();
     document.body.appendChild(picker);
-    const ph = picker.offsetHeight || 160;
-    picker.style.top  = Math.max(4, rect.top + window.scrollY - ph / 2 + rect.height / 2) + 'px';
-    picker.style.left = (rect.right + window.scrollX + 6) + 'px';
+    const rect = anchorBtn.getBoundingClientRect();
+    const pw = picker.offsetWidth || 50;
+    const ph = picker.offsetHeight || 140;
+    picker.style.top  = Math.max(4, rect.top + window.scrollY + rect.height / 2 - ph / 2) + 'px';
+    picker.style.left = (rect.left + window.scrollX - pw - 6) + 'px';
 
     setTimeout(() => {
       document.addEventListener('click', function h(e) {
@@ -2174,24 +2180,19 @@ render();
       .stars-grid-add-group:hover { background:rgba(0,100,200,.7); color:#fff; }
       .stars-grid-author { font-size:11px; color:#999; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
       .stars-grid-desc   { font-size:11px; color:#666; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-      #stars-group-picker { position:absolute; z-index:2000; background:#252525; border:1px solid #555; border-radius:6px; padding:6px 0; min-width:160px; box-shadow:0 4px 16px rgba(0,0,0,.6); }
+      #stars-group-picker { position:absolute; z-index:5500; background:#252525; border:1px solid #555; border-radius:6px; padding:6px 0; min-width:160px; box-shadow:0 4px 16px rgba(0,0,0,.6); }
       .stars-picker-row { display:flex; align-items:center; gap:8px; padding:6px 14px; font-size:13px; cursor:pointer; transition:background .1s; }
       .stars-picker-row:hover { background:#333; }
 
       /* ── Level picker popup ── */
       #level-picker {
-        position:absolute; z-index:5000; background:#252525; border:1px solid #555;
-        border-radius:8px; padding:12px 10px; box-shadow:0 4px 20px rgba(0,0,0,.7);
-        display:flex; flex-direction:row; align-items:center; gap:10px;
-      }
-      #level-picker-label {
-        text-align:center; font-size:22px; font-weight:700; color:#fff; line-height:1;
-        min-width:26px;
+        position:absolute; z-index:5500; background:#252525; border:1px solid #555;
+        border-radius:8px; padding:10px 8px; box-shadow:0 4px 20px rgba(0,0,0,.7);
       }
       #level-picker-slider {
         writing-mode:vertical-lr; direction:rtl;
         appearance:slider-vertical; -webkit-appearance:slider-vertical;
-        height:120px; width:28px; accent-color:#fe2c55; cursor:pointer;
+        height:120px; width:28px; accent-color:#fe2c55; cursor:pointer; display:block;
       }
 
       /* ── Overlay lvl button ── */
