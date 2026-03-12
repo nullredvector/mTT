@@ -3,7 +3,7 @@ services:
     image: ghcr.io/nullredvector/starplayer:latest
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "9494:8080"
     volumes:
       - /mnt/zion/enc/archive/Downloads/incomplete/content2/shorts:/archive
     environment:

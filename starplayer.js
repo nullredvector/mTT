@@ -176,7 +176,13 @@
       coverDiv.appendChild(cap);
     });
 
-    // Hide "Explain" buttons (app.js renders these; useless on mobile)
+    // Mark and hide "Explain" nav tab on mobile (app.js renders it; useless on mobile)
+    document.querySelectorAll('nav > div').forEach(div => {
+      if (/explain/i.test(div.textContent.trim())) {
+        div.classList.add('explain-tab');
+      }
+    });
+    // Also hide any stray "Explain" buttons
     document.querySelectorAll('button').forEach(btn => {
       if (/^explain$/i.test(btn.textContent.trim())) {
         btn.style.setProperty('display', 'none', 'important');
@@ -612,6 +618,7 @@
   let playerVideoList      = [];
   let playerColumnOffsets  = [];   // one index per column, independently navigable
   let playerBuilding       = false;
+  let playerViewEl         = null;  // mobile tab-view element (like starsViewEl)
 
   function numCols() { return window.innerWidth < 768 ? 1 : 3; }
 
@@ -770,23 +777,83 @@
   // PLAYER — OVERLAY
   // ═══════════════════════════════════════════════════════════════════════════
 
+  function isMobilePlayer() { return window.innerWidth < 768; }
+
   async function openPlayer() {
     if (starsTabActive) showMainContent();
     playerOpen = true;
     playerColumnOffsets = Array.from({ length: numCols() }, (_, i) => i);
-    renderPlayerOverlay();
+    if (isMobilePlayer()) {
+      showMobilePlayerView();
+    } else {
+      renderPlayerOverlay();
+    }
     document.querySelector('nav .player-tab')?.classList.add('active');
     playerVideoList = await buildVideoList();
     if (playerOpen) {
       playerColumnOffsets = Array.from({ length: numCols() }, (_, i) => i);
-      renderPlayerOverlay();
+      if (isMobilePlayer()) {
+        renderMobilePlayerContent();
+      } else {
+        renderPlayerOverlay();
+      }
     }
   }
 
   function closePlayer() {
     playerOpen = false;
     document.getElementById('player-overlay')?.remove();
+    hideMobilePlayerView();
     document.querySelector('nav .player-tab')?.classList.remove('active');
+  }
+
+  function showMobilePlayerView() {
+    document.querySelector('main')?.style.setProperty('display', 'none');
+    toggleBtn.style.display = 'none';
+    closePanel();
+    const main = document.querySelector('main');
+    if (!playerViewEl) {
+      playerViewEl = document.createElement('div');
+      playerViewEl.id = 'player-view';
+      main?.parentNode.insertBefore(playerViewEl, main);
+    }
+    playerViewEl.style.display = 'flex';
+    playerViewEl.innerHTML = '';
+    // Show a loading state immediately
+    const loading = document.createElement('div');
+    loading.id = 'player-view-loading';
+    loading.textContent = 'Loading…';
+    playerViewEl.appendChild(loading);
+  }
+
+  function hideMobilePlayerView() {
+    if (!playerViewEl) return;
+    playerViewEl.style.display = 'none';
+    playerViewEl.innerHTML = '';
+    document.querySelector('main')?.style.removeProperty('display');
+    toggleBtn.style.display = '';
+  }
+
+  function renderMobilePlayerContent() {
+    if (!playerViewEl) return;
+    playerViewEl.innerHTML = '';
+
+    // Minimal header: back button + counter
+    const header = document.createElement('div');
+    header.id = 'player-view-header';
+
+    const backBtn = document.createElement('button');
+    backBtn.id = 'player-view-back';
+    backBtn.textContent = '← Back';
+    backBtn.addEventListener('click', closePlayer);
+    header.appendChild(backBtn);
+
+    const counter = document.createElement('span');
+    counter.id = 'player-counter';
+    header.appendChild(counter);
+
+    playerViewEl.appendChild(header);
+    renderMobileScrollFeed(playerViewEl);
   }
 
   // Navigate a single column independently. Rebuilds only that column's content.
@@ -1043,10 +1110,16 @@
     });
 
     // Size each slide to exactly fill the feed container (resolved after layout)
-    requestAnimationFrame(() => {
+    const setSlideHeights = () => {
       const h = feed.clientHeight;
-      if (h > 0) feed.querySelectorAll('.player-slide').forEach(s => { s.style.height = h + 'px'; });
-    });
+      if (h > 0) {
+        feed.querySelectorAll('.player-slide').forEach(s => { s.style.height = h + 'px'; });
+      } else {
+        // Retry once more if layout hasn't resolved yet
+        requestAnimationFrame(setSlideHeights);
+      }
+    };
+    requestAnimationFrame(setSlideHeights);
 
     // Restore last-viewed position without animation
     const startIdx = playerColumnOffsets[0] || 0;
@@ -1686,13 +1759,25 @@ render();
         /* ── Hide star bubble on mobile ── */
         #star-toggle { display: none !important; }
 
-        /* ── Player sits above the bottom nav bar ── */
-        #player-overlay { bottom: 62px !important; }
+        /* ── Mobile player: tab-view (no overlay) ── */
+        #player-view {
+          position: fixed; inset: 0; bottom: 62px; z-index: 3000;
+          background: #0d0d0d; flex-direction: column; display: none;
+        }
+        #player-view-header {
+          display: flex; align-items: center; gap: 10px;
+          padding: 8px 12px; background: #1a1a1a;
+          border-bottom: 1px solid #2a2a2a; flex-shrink: 0;
+        }
+        #player-view-back {
+          background: none; border: 1px solid #444; border-radius: 4px;
+          color: #ccc; cursor: pointer; padding: 5px 10px; font-size: 13px;
+        }
+        #player-view #player-counter { font-size: 12px; color: #666; }
+        #player-view #player-feed { flex: 1; }
 
-        /* ── Col-nav buttons hidden on mobile (scroll-snap replaces them) ── */
-        .player-col-nav { display: none !important; }
-        /* ── Prev/next arrow buttons hidden on mobile ── */
-        #player-overlay .player-nav-btn { display: none !important; }
+        /* ── Hide Explain nav tab on mobile ── */
+        nav > div.explain-tab { display: none !important; }
 
         /* ── Bottom tab bar ── */
         nav {
