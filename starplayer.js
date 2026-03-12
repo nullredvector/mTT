@@ -177,14 +177,17 @@
     applyMobileCards();
   }
 
-  // Intercept thumbnail clicks to open our overlay instead of React's player
+  // Intercept thumbnail clicks to open our overlay instead of React's player.
+  // We attach on BOTH the cover div AND the thumbnail img in the capture phase
+  // with stopImmediatePropagation to ensure React's handlers never fire.
   function interceptCoverClick(coverDiv) {
     if (coverDiv._overlayBound) return;
     coverDiv._overlayBound = true;
-    coverDiv.addEventListener('click', e => {
-      // Don't intercept star button clicks
-      if (e.target.closest('.star-btn')) return;
-      e.stopPropagation();
+
+    function handleClick(e) {
+      // Don't intercept star button or other control clicks
+      if (e.target.closest('.star-btn') || e.target.closest('.overlay-ctrl-btn')) return;
+      e.stopImmediatePropagation();
       e.preventDefault();
       const img = coverDiv.querySelector('img.thumbnail');
       const src = img && img.getAttribute('src');
@@ -194,7 +197,14 @@
       const contextList = buildContextFromDOM();
       const idx = contextList.findIndex(v => v.id === videoId);
       openVideoOverlay(idx >= 0 ? idx : 0, contextList);
-    }, true); // capture phase to beat React
+    }
+
+    coverDiv.addEventListener('click', handleClick, true);
+    // Also intercept on the thumbnail image itself
+    const img = coverDiv.querySelector('img.thumbnail');
+    if (img) {
+      img.addEventListener('click', handleClick, true);
+    }
   }
 
   function buildContextFromDOM() {
@@ -1420,11 +1430,22 @@
       rightCenter.appendChild(groupBtn);
       controls.appendChild(rightCenter);
 
-      if (item.authorName) {
-        const auth = document.createElement('div');
-        auth.className = 'player-author';
-        auth.textContent = '@' + item.authorName;
-        controls.appendChild(auth);
+      {
+        const info = getVideoInfo(item.id);
+        const name = info.authorName || item.authorName || '';
+        const caption = info.desc || '';
+        if (name) {
+          const auth = document.createElement('div');
+          auth.className = 'player-author';
+          auth.textContent = '@' + name;
+          controls.appendChild(auth);
+        }
+        if (caption) {
+          const cap = document.createElement('div');
+          cap.className = 'player-caption';
+          cap.textContent = caption.length > 120 ? caption.slice(0, 120) + '…' : caption;
+          controls.appendChild(cap);
+        }
       }
 
       let muted = true;
@@ -1538,11 +1559,24 @@
     rightCenter.appendChild(groupBtn);
     controls.appendChild(rightCenter);
 
-    // Bottom-left: author
-    const auth = document.createElement('div');
-    auth.className = 'player-author';
-    auth.textContent = authorName ? '@' + authorName : '';
-    controls.appendChild(auth);
+    // Bottom-left: author + caption
+    {
+      const info = getVideoInfo(id);
+      const name = info.authorName || authorName || '';
+      const caption = info.desc || '';
+      if (name) {
+        const authDiv = document.createElement('div');
+        authDiv.className = 'player-author';
+        authDiv.textContent = '@' + name;
+        controls.appendChild(authDiv);
+      }
+      if (caption) {
+        const capDiv = document.createElement('div');
+        capDiv.className = 'player-caption';
+        capDiv.textContent = caption.length > 120 ? caption.slice(0, 120) + '…' : caption;
+        controls.appendChild(capDiv);
+      }
+    }
 
     // Bottom-center: per-column ↑ ↓ navigation
     const colNav = document.createElement('div');
@@ -2037,10 +2071,17 @@ render();
       .player-ctrl-btn:hover { background: rgba(0,0,0,.85); transform: scale(1.08); }
       .player-star-btn.active { color: gold; }
       .player-author {
+        position: absolute; bottom: 32px; left: 14px;
+        font-size: 14px; font-weight: 600; pointer-events: none;
+        text-shadow: 0 1px 4px rgba(0,0,0,.9); color: #fff;
+        max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .player-caption {
         position: absolute; bottom: 14px; left: 14px;
-        font-size: 13px; font-weight: 500; pointer-events: none;
-        text-shadow: 0 1px 4px rgba(0,0,0,.9); color: #eee;
-        max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        font-size: 12px; color: rgba(255,255,255,.85); pointer-events: none;
+        text-shadow: 0 1px 3px rgba(0,0,0,.8);
+        max-width: 55%; line-height: 1.4;
+        display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
       }
       .player-mute-btn { position: absolute; bottom: 10px; right: 10px; pointer-events: auto; }
 
