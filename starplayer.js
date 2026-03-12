@@ -1550,7 +1550,7 @@
   const TAB_LABELS = { home: 'Home', stars: 'Stars', recents: 'Recents', favs: 'Favs' };
 
   function getSwipeViewEl() {
-    if (activeMobileTab === 'home')    return document.getElementById('player-overlay');
+    if (activeMobileTab === 'home')    return playerViewEl;
     if (activeMobileTab === 'stars')   return document.getElementById('stars-view');
     return document.querySelector('main');
   }
@@ -1621,7 +1621,6 @@
     }, { passive: true });
 
     document.addEventListener('touchmove', e => {
-      if (activeMobileTab === 'home') return; // slide handles home
       const dx = e.touches[0].clientX - _tsx;
       const dy = e.touches[0].clientY - _tsy;
       if (!_swipeDir && (Math.abs(dx) > 8 || Math.abs(dy) > 8))
@@ -1635,7 +1634,6 @@
     }, { passive: true });
 
     document.addEventListener('touchend', e => {
-      if (activeMobileTab === 'home') return;
       const dx = e.changedTouches[0].clientX - _tsx;
       const dy = e.changedTouches[0].clientY - _tsy;
       hideSwipeHint();
@@ -1849,30 +1847,14 @@
     if (!playerViewEl) return;
     playerViewEl.innerHTML = '';
 
-    // Minimal header: back button + counter
-    const header = document.createElement('div');
-    header.id = 'player-view-header';
-
-    const backBtn = document.createElement('button');
-    backBtn.id = 'player-view-back';
-    backBtn.textContent = '← Back';
-    backBtn.addEventListener('click', closePlayer);
-    header.appendChild(backBtn);
-
-    const counter = document.createElement('span');
-    counter.id = 'player-counter';
-    header.appendChild(counter);
-
     if (!playerVideoList.length) {
       const empty = document.createElement('div');
       empty.id = 'player-view-loading';
       empty.textContent = 'No videos found.';
-      playerViewEl.appendChild(header);
       playerViewEl.appendChild(empty);
       return;
     }
 
-    playerViewEl.appendChild(header);
     renderMobileScrollFeed(playerViewEl);
   }
 
