@@ -631,6 +631,18 @@
     });
     rightCenter.appendChild(starBtn);
 
+    const lvlBtn = document.createElement('button');
+    lvlBtn.className = 'overlay-ctrl-btn overlay-lvl-btn';
+    lvlBtn.textContent = stars[item.id]?.level != null ? String(stars[item.id].level) : 'lvl';
+    lvlBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      showLevelPicker(lvlBtn, item.id, newLvl => {
+        lvlBtn.textContent = newLvl != null ? String(newLvl) : 'lvl';
+        if (starsTabActive) renderStarsView();
+      });
+    });
+    rightCenter.appendChild(lvlBtn);
+
     const groupBtn = document.createElement('button');
     groupBtn.className = 'overlay-ctrl-btn overlay-group-btn';
     groupBtn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>';
@@ -796,6 +808,7 @@
   let starsTabActive = false;
   let starsViewEl    = null;
   let activeGroupId  = 'all';
+  let activeLvl      = null;   // null = no filter, 10-23 = filter by level
 
   function showStarsTab() {
     starsTabActive = true;
@@ -847,8 +860,54 @@
       return item;
     }
 
+    // ── Lvl filter (collapsible) ──────────────────────────────────────────────
+    const lvlSection = document.createElement('div');
+    lvlSection.id = 'stars-lvl-section';
+
+    const lvlHeader = document.createElement('div');
+    lvlHeader.id = 'stars-lvl-header';
+    const lvlHeaderLabel = document.createElement('span');
+    lvlHeaderLabel.textContent = 'lvl';
+    const lvlChevron = document.createElement('span');
+    lvlChevron.id = 'stars-lvl-chevron';
+    lvlChevron.textContent = lvlSection._open ? '▾' : '▸';
+    lvlHeader.appendChild(lvlHeaderLabel);
+    lvlHeader.appendChild(lvlChevron);
+
+    const lvlGrid = document.createElement('div');
+    lvlGrid.id = 'stars-lvl-grid';
+    lvlGrid.style.display = lvlSection._open ? 'grid' : 'none';
+
+    for (let n = 10; n <= 23; n++) {
+      const count = Object.values(stars).filter(s => s.level === n).length;
+      const btn = document.createElement('button');
+      btn.className = 'stars-lvl-btn' + (activeLvl === n ? ' active' : '');
+      btn.textContent = n;
+      btn.title = count + ' star' + (count !== 1 ? 's' : '');
+      btn.addEventListener('click', () => {
+        activeLvl = activeLvl === n ? null : n;
+        renderStarsView();
+      });
+      lvlGrid.appendChild(btn);
+    }
+
+    lvlHeader.addEventListener('click', () => {
+      const open = lvlGrid.style.display === 'none';
+      lvlGrid.style.display = open ? 'grid' : 'none';
+      lvlChevron.textContent = open ? '▾' : '▸';
+    });
+
+    lvlSection.appendChild(lvlHeader);
+    lvlSection.appendChild(lvlGrid);
+    sidebar.appendChild(lvlSection);
+
+    const lvlDivider = document.createElement('hr');
+    lvlDivider.className = 'stars-sidebar-divider';
+    sidebar.appendChild(lvlDivider);
+
+    // ── All Stars ─────────────────────────────────────────────────────────────
     const allItem = makeSidebarItem('all', 'All Stars', Object.keys(stars).length);
-    allItem.addEventListener('click', () => { activeGroupId = 'all'; renderStarsView(); });
+    allItem.addEventListener('click', () => { activeGroupId = 'all'; activeLvl = null; renderStarsView(); });
     sidebar.appendChild(allItem);
 
     const divider = document.createElement('hr');
@@ -907,10 +966,13 @@
       ? 'All Stars'
       : (groups.find(g => g.id === activeGroupId)?.name || 'Stars');
 
-    const videosToShow = activeGroupId === 'all'
+    const baseVideos = activeGroupId === 'all'
       ? Object.values(stars)
       : (groups.find(g => g.id === activeGroupId)?.videoIds || [])
           .filter(id => stars[id]).map(id => stars[id]);
+    const videosToShow = activeLvl != null
+      ? baseVideos.filter(s => s.level === activeLvl)
+      : baseVideos;
 
     const mainHeader = document.createElement('div');
     mainHeader.id = 'stars-main-header';
@@ -1029,6 +1091,71 @@
     setTimeout(() => {
       document.addEventListener('click', function h(e) {
         if (!picker.contains(e.target)) { picker.remove(); document.removeEventListener('click', h); }
+      });
+    }, 0);
+  }
+
+  function showLevelPicker(anchorBtn, videoId, onUpdate) {
+    document.getElementById('level-picker')?.remove();
+
+    const picker = document.createElement('div');
+    picker.id = 'level-picker';
+
+    const currentLvl = stars[videoId]?.level ?? null;
+
+    const label = document.createElement('div');
+    label.id = 'level-picker-label';
+    label.textContent = currentLvl != null ? String(currentLvl) : '–';
+    picker.appendChild(label);
+
+    const slider = document.createElement('input');
+    slider.type  = 'range';
+    slider.min   = 10;
+    slider.max   = 23;
+    slider.step  = 1;
+    slider.value = currentLvl != null ? currentLvl : 16;
+    slider.id    = 'level-picker-slider';
+    slider.addEventListener('input', () => {
+      label.textContent = slider.value;
+    });
+    picker.appendChild(slider);
+
+    const actions = document.createElement('div');
+    actions.id = 'level-picker-actions';
+
+    const setBtn = document.createElement('button');
+    setBtn.textContent = 'Set';
+    setBtn.className = 'level-picker-btn level-picker-set';
+    setBtn.addEventListener('click', () => {
+      const lvl = Number(slider.value);
+      if (stars[videoId]) { stars[videoId].level = lvl; saveStars(); }
+      onUpdate(lvl);
+      picker.remove();
+    });
+
+    const clearBtn = document.createElement('button');
+    clearBtn.textContent = 'Clear';
+    clearBtn.className = 'level-picker-btn level-picker-clear';
+    clearBtn.addEventListener('click', () => {
+      if (stars[videoId]) { delete stars[videoId].level; saveStars(); }
+      onUpdate(null);
+      picker.remove();
+    });
+
+    actions.appendChild(setBtn);
+    actions.appendChild(clearBtn);
+    picker.appendChild(actions);
+
+    const rect = anchorBtn.getBoundingClientRect();
+    picker.style.top  = (rect.bottom + window.scrollY + 6) + 'px';
+    picker.style.left = (rect.left   + window.scrollX - 60) + 'px';
+    document.body.appendChild(picker);
+
+    setTimeout(() => {
+      document.addEventListener('click', function h(e) {
+        if (!picker.contains(e.target) && e.target !== anchorBtn) {
+          picker.remove(); document.removeEventListener('click', h);
+        }
       });
     }, 0);
   }
@@ -2060,6 +2187,52 @@ render();
       #stars-group-picker { position:absolute; z-index:2000; background:#252525; border:1px solid #555; border-radius:6px; padding:6px 0; min-width:160px; box-shadow:0 4px 16px rgba(0,0,0,.6); }
       .stars-picker-row { display:flex; align-items:center; gap:8px; padding:6px 14px; font-size:13px; cursor:pointer; transition:background .1s; }
       .stars-picker-row:hover { background:#333; }
+
+      /* ── Level picker popup ── */
+      #level-picker {
+        position:absolute; z-index:5000; background:#252525; border:1px solid #555;
+        border-radius:8px; padding:12px 14px; box-shadow:0 4px 20px rgba(0,0,0,.7);
+        min-width:160px; display:flex; flex-direction:column; gap:8px;
+      }
+      #level-picker-label {
+        text-align:center; font-size:22px; font-weight:700; color:#fff; line-height:1;
+      }
+      #level-picker-slider {
+        width:100%; accent-color:#fe2c55; cursor:pointer;
+      }
+      #level-picker-actions { display:flex; gap:6px; }
+      .level-picker-btn {
+        flex:1; padding:5px 0; border:none; border-radius:5px; font-size:13px;
+        cursor:pointer; font-weight:600; transition:opacity .15s;
+      }
+      .level-picker-set   { background:#fe2c55; color:#fff; }
+      .level-picker-clear { background:#333; color:#aaa; }
+      .level-picker-btn:hover { opacity:.85; }
+
+      /* ── Overlay lvl button ── */
+      .overlay-lvl-btn { font-size:11px; font-weight:700; letter-spacing:.5px; }
+
+      /* ── Stars sidebar lvl section ── */
+      #stars-lvl-section { margin-bottom:4px; }
+      #stars-lvl-header {
+        display:flex; align-items:center; justify-content:space-between;
+        padding:6px 10px; cursor:pointer; border-radius:5px;
+        font-size:12px; font-weight:700; color:#aaa; letter-spacing:.5px;
+        text-transform:uppercase; user-select:none; transition:background .1s;
+      }
+      #stars-lvl-header:hover { background:#2a2a2a; }
+      #stars-lvl-chevron { font-size:10px; }
+      #stars-lvl-grid {
+        display:grid; grid-template-columns:repeat(4,1fr); gap:4px;
+        padding:4px 6px 8px;
+      }
+      .stars-lvl-btn {
+        background:#1e1e1e; border:1px solid #3a3a3a; border-radius:4px;
+        color:#bbb; font-size:12px; font-weight:600; padding:4px 0;
+        cursor:pointer; transition:background .1s, color .1s, border-color .1s;
+      }
+      .stars-lvl-btn:hover  { background:#2a2a2a; color:#fff; }
+      .stars-lvl-btn.active { background:#fe2c55; border-color:#fe2c55; color:#fff; }
 
       /* ── Video overlay (unified player) ── */
       #video-overlay {
