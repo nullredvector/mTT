@@ -444,12 +444,6 @@
     // Reposition rows into 2-column grid
     applyMobileGridLayout();
 
-    // Move nav out of header so we can hide header without losing the bottom tab bar
-    const navEl = document.querySelector('header nav') || document.querySelector('nav');
-    if (navEl && navEl.parentElement !== document.body) {
-      document.body.appendChild(navEl);
-    }
-
     // Mark and hide "Explain" nav tab on mobile (app.js renders it; useless on mobile)
     document.querySelectorAll('nav > div').forEach(div => {
       if (/explain/i.test(div.textContent.trim())) {
@@ -2834,8 +2828,9 @@ render();
         #player-view #player-counter { font-size: 12px; color: #666; flex: 1; text-align: center; }
         #player-view #player-feed { flex: 1; min-height: 0; }
 
-        /* ── Hide header entirely on mobile (nav relocated to body via JS) ── */
-        header { display: none !important; }
+        /* ── Hide header chrome on mobile (logo + search) — nav moves to bottom ── */
+        header { height: auto !important; padding: 0 !important; }
+        header > *:not(nav) { display: none !important; }
 
         /* ── Hide Explain nav tab on mobile ── */
         nav > div.explain-tab { display: none !important; }
