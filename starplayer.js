@@ -113,6 +113,23 @@
     return Date.now().toString(36) + Math.random().toString(36).slice(2);
   }
 
+  // Toggle a video in/out of a named group (creates the group if it doesn't exist).
+  // Returns true if the video is now IN the group.
+  function toggleQuickGroup(videoId, groupName) {
+    let g = groups.find(x => x.name === groupName);
+    if (!g) { g = { id: uid(), name: groupName, videoIds: [] }; groups.push(g); }
+    const idx = g.videoIds.indexOf(videoId);
+    if (idx === -1) { g.videoIds.push(videoId); } else { g.videoIds.splice(idx, 1); }
+    saveGroups();
+    if (starsTabActive) renderStarsView();
+    return g.videoIds.includes(videoId);
+  }
+
+  function inQuickGroup(videoId, groupName) {
+    const g = groups.find(x => x.name === groupName);
+    return g ? g.videoIds.includes(videoId) : false;
+  }
+
   function getVideoIdFromSrc(src) {
     const m = src && src.match(/covers\/(\d+)\.jpg/);
     return m ? m[1] : null;
@@ -2090,6 +2107,40 @@
     const rightCenter = document.createElement('div');
     rightCenter.className = 'player-right-center';
 
+    const thumbUpBtn = document.createElement('button');
+    thumbUpBtn.className = 'player-ctrl-btn player-thumb-btn player-thumb-up';
+    thumbUpBtn.title = 'Add to Liked';
+    thumbUpBtn.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z"/></svg>';
+    thumbUpBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      if (!currentItem) return;
+      const now = toggleQuickGroup(currentItem.id, 'liked');
+      thumbUpBtn.classList.toggle('active', now);
+      // Mutually exclusive: remove from disliked if adding to liked
+      if (now) {
+        const dg = groups.find(x => x.name === 'disliked');
+        if (dg) { dg.videoIds = dg.videoIds.filter(id => id !== currentItem.id); saveGroups(); }
+        thumbDownBtn.classList.remove('active');
+      }
+    });
+
+    const thumbDownBtn = document.createElement('button');
+    thumbDownBtn.className = 'player-ctrl-btn player-thumb-btn player-thumb-down';
+    thumbDownBtn.title = 'Add to Disliked';
+    thumbDownBtn.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M15 3H6c-.83 0-1.54.5-1.84 1.22l-3.02 7.05c-.09.23-.14.47-.14.73v2c0 1.1.9 2 2 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L9.83 23l6.59-6.59c.36-.36.58-.86.58-1.41V5c0-1.1-.9-2-2-2zm4 0v12h4V3h-4z"/></svg>';
+    thumbDownBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      if (!currentItem) return;
+      const now = toggleQuickGroup(currentItem.id, 'disliked');
+      thumbDownBtn.classList.toggle('active', now);
+      // Mutually exclusive: remove from liked if adding to disliked
+      if (now) {
+        const lg = groups.find(x => x.name === 'liked');
+        if (lg) { lg.videoIds = lg.videoIds.filter(id => id !== currentItem.id); saveGroups(); }
+        thumbUpBtn.classList.remove('active');
+      }
+    });
+
     const starBtn = document.createElement('button');
     starBtn.className = 'player-ctrl-btn player-star-btn';
     starBtn.innerHTML = '★';
@@ -2136,6 +2187,8 @@
       muteBtn.title = currentMuted ? 'Unmute' : 'Mute';
     });
 
+    rightCenter.appendChild(thumbUpBtn);
+    rightCenter.appendChild(thumbDownBtn);
     rightCenter.appendChild(starBtn);
     rightCenter.appendChild(lvlBtn);
     rightCenter.appendChild(groupBtn);
@@ -2157,6 +2210,9 @@
       currentItem = item;
       currentVid  = vid;
       vid.muted   = currentMuted;
+
+      thumbUpBtn.classList.toggle('active', inQuickGroup(item.id, 'liked'));
+      thumbDownBtn.classList.toggle('active', inQuickGroup(item.id, 'disliked'));
 
       starBtn.classList.toggle('active', Boolean(stars[item.id]));
       starBtn.title = stars[item.id] ? 'Remove from Stars' : 'Add to Stars';
@@ -3311,6 +3367,8 @@ render();
           position: absolute; bottom: 14px; right: 10px;
           pointer-events: auto; width: 41px; height: 41px; font-size: 18px;
         }
+        #player-overlay-controls .player-thumb-up.active  { color: #4caf50; }
+        #player-overlay-controls .player-thumb-down.active { color: #f44336; }
 
         /* Safe area inset for iPhone home indicator */
         #sp-mobile-nav {
