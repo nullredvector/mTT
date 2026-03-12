@@ -647,27 +647,32 @@
     const ids = [];
     let walked = 0;
 
-    function walk(fiber) {
-      if (!fiber || walked++ > 50000) return;
+    // Iterative (not recursive) — avoids call-stack overflow on mobile,
+    // where the JS stack limit is far smaller than on desktop.
+    const stack = [rootFiber];
+    while (stack.length > 0 && walked < 50000) {
+      const fiber = stack.pop();
+      if (!fiber) continue;
+      walked++;
       const p = fiber.memoizedProps;
-      // Log any component that looks list-like so we can see what's available
       if (p && typeof p.itemCount === 'number' && p.itemCount > 0) {
         console.log('[Fiber] list-like node itemCount=' + p.itemCount +
-          ' hasItemKey=' + (typeof p.itemKey === 'function') +
-          ' hasItemSize=' + (typeof p.itemSize === 'function'));
+          ' hasItemKey=' + (typeof p.itemKey === 'function'));
         if (typeof p.itemKey === 'function') {
           for (let i = 2; i < p.itemCount; i++) {
             const id = p.itemKey(i);
             if (typeof id === 'string' && id.length > 8) ids.push(id);
           }
-          return;
+          // Don't descend into children of a matched list node; do continue siblings
+          if (fiber.sibling) stack.push(fiber.sibling);
+          continue;
         }
       }
-      walk(fiber.child);
-      walk(fiber.sibling);
+      // Push sibling before child so child is processed first (depth-first order)
+      if (fiber.sibling) stack.push(fiber.sibling);
+      if (fiber.child)   stack.push(fiber.child);
     }
 
-    walk(rootFiber);
     console.log('[Fiber] walked', walked, 'nodes, ids:', ids.length);
     return ids;
   }
@@ -1050,11 +1055,19 @@
     feed.id = 'player-feed';
     overlay.appendChild(feed);
 
-    if (!total) return; // still loading — feed shows empty, counter says "Loading…"
+    if (!total) return;
+
+    // Cap rendered slides on mobile to avoid OOM crash from creating hundreds
+    // of <video> elements at once. 60 gives ~30 min of content to scroll through.
+    const MOBILE_CAP = 60;
+    const renderList = total > MOBILE_CAP ? playerVideoList.slice(0, MOBILE_CAP) : playerVideoList;
+    if (counter && total > MOBILE_CAP) {
+      counter.title = `Showing first ${MOBILE_CAP} of ${total}`;
+    }
 
     const videoEls = [];
 
-    playerVideoList.forEach((item, idx) => {
+    renderList.forEach((item, idx) => {
       const slide = document.createElement('div');
       slide.className = 'player-slide';
       slide.dataset.idx = idx;
@@ -1143,6 +1156,8 @@
       feed.children[startIdx].scrollIntoView({ behavior: 'instant' });
     }
 
+    const rendered = renderList.length;
+
     // IntersectionObserver: play the centered slide, pause everything else
     const io = new IntersectionObserver(entries => {
       entries.forEach(entry => {
@@ -1151,7 +1166,7 @@
         if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
           playerColumnOffsets[0] = idx;
           vid.play().catch(() => {});
-          if (counter) counter.textContent = `${idx + 1} / ${total}`;
+          if (counter) counter.textContent = `${idx + 1} / ${rendered}`;
         } else {
           vid.pause();
         }
@@ -1162,7 +1177,7 @@
 
     // Kick off the starting video
     videoEls[startIdx]?.play().catch(() => {});
-    if (counter) counter.textContent = `${startIdx + 1} / ${total}`;
+    if (counter) counter.textContent = `${startIdx + 1} / ${rendered}`;
   }
 
   function buildPlayerColumn(item, colIdx) {
