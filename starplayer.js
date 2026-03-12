@@ -219,8 +219,6 @@
   function toggleStar(videoId, coverSrc, authorName, desc) {
     if (stars[videoId]) {
       delete stars[videoId];
-      groups.forEach(g => { g.videoIds = g.videoIds.filter(id => id !== videoId); });
-      saveGroups();
     } else {
       stars[videoId] = { id: videoId, coverSrc, authorName: authorName || '', desc: desc || '' };
     }
@@ -803,8 +801,7 @@
         rm.addEventListener('click', e => {
           e.stopPropagation();
           delete stars[star.id];
-          groups.forEach(g => { g.videoIds = g.videoIds.filter(i => i !== star.id); });
-          saveStars(); saveGroups();
+          saveStars();
           refreshAllButtons(); updateToggleBtn(); renderPanel();
         });
         cw.appendChild(rm);
@@ -973,16 +970,12 @@
 
     // sort before rendering
     const sortedGroups = [...groups].sort((a, b) => {
-      if (groupSortOrder === 'count') {
-        const ca = a.videoIds.filter(id => stars[id]).length;
-        const cb = b.videoIds.filter(id => stars[id]).length;
-        return cb - ca;
-      }
+      if (groupSortOrder === 'count') return b.videoIds.length - a.videoIds.length;
       return a.name.localeCompare(b.name);
     });
 
     sortedGroups.forEach(g => {
-      const count = g.videoIds.filter(id => stars[id]).length;
+      const count = g.videoIds.length;
       const row = document.createElement('div');
       row.className = 'stars-group-row';
 
@@ -1159,7 +1152,7 @@
             if (seen.has(id)) return; seen.add(id);
             if (stars[id]) {
               baseVideos.push({ ...stars[id], id });
-            } else if (levels[id] != null) {
+            } else {
               baseVideos.push({ id, coverSrc: `data/Likes/covers/${id}.jpg`, authorName: '', desc: '', lvlOnly: true });
             }
           });
@@ -1192,8 +1185,15 @@
       } else {
         videosToShow.forEach(star => {
           const { desc, authorName } = star.lvlOnly ? { desc: '', authorName: '' } : getVideoInfo(star.id);
-          const onRemove = star.lvlOnly
-            ? () => { delete levels[star.id]; saveLevels(); renderStarsView(); }
+          // For unstarred cards in group view: ✕ removes from the selected groups (not the level)
+          const onRemove = (star.lvlOnly && !isAll)
+            ? () => {
+                activeGroupIds.forEach(gid => {
+                  const g = groups.find(x => x.id === gid);
+                  if (g) g.videoIds = g.videoIds.filter(id => id !== star.id);
+                });
+                saveGroups(); renderStarsView();
+              }
             : null;
           grid.appendChild(buildStarsGridCard(star, authorName, desc, onRemove));
         });
