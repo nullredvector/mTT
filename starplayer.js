@@ -546,6 +546,16 @@
   let overlayMuted   = true;
 
   function openVideoOverlay(startIdx, contextList) {
+    // On mobile route to the scroll-snap feed instead of the small overlay
+    if (isMobilePlayer()) {
+      playerOpen = true;
+      playerVideoList = contextList;
+      playerColumnOffsets = [startIdx];
+      document.querySelector('nav .player-tab')?.classList.add('active');
+      renderMobilePlayerContent();
+      return;
+    }
+
     closeVideoOverlay();
     overlayCtx = contextList;
     overlayIdx = startIdx;
@@ -1868,6 +1878,19 @@
         starBtn.title = stars[item.id] ? 'Remove from Stars' : 'Add to Stars';
       });
 
+      const lvlBtn = document.createElement('button');
+      lvlBtn.className = 'player-ctrl-btn player-lvl-btn';
+      lvlBtn.textContent = levels[item.id] != null ? String(levels[item.id]) : 'lvl';
+      lvlBtn.title = 'Set level';
+      lvlBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        showLevelPicker(lvlBtn, item.id, newLvl => {
+          lvlBtn.textContent = newLvl != null ? String(newLvl) : 'lvl';
+          lvlBtn.classList.toggle('active', newLvl != null);
+          if (starsTabActive) renderStarsView();
+        });
+      });
+
       const groupBtn = document.createElement('button');
       groupBtn.className = 'player-ctrl-btn player-group-btn';
       groupBtn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>';
@@ -1875,6 +1898,7 @@
       groupBtn.addEventListener('click', e => { e.stopPropagation(); showGroupPicker(groupBtn, item.id); });
 
       rightCenter.appendChild(starBtn);
+      rightCenter.appendChild(lvlBtn);
       rightCenter.appendChild(groupBtn);
       controls.appendChild(rightCenter);
 
@@ -2697,6 +2721,8 @@ render();
       }
       .player-ctrl-btn:hover { background: rgba(0,0,0,.85); transform: scale(1.08); }
       .player-star-btn.active { color: gold; }
+      .player-lvl-btn { font-size: 11px; font-weight: 700; letter-spacing: .5px; }
+      .player-lvl-btn.active { color: #fe2c55; }
       .player-author {
         position: absolute; bottom: 32px; left: 14px;
         font-size: 14px; font-weight: 600; pointer-events: none;
