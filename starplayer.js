@@ -566,12 +566,16 @@
       if (e.key === 'ArrowUp'   || e.key === 'ArrowLeft')  { navigateOverlay(-1); return; }
     });
 
-    // Swipe (mobile)
+    // Swipe / tap (mobile)
     let _sy = 0;
     overlayEl.addEventListener('touchstart', e => { _sy = e.touches[0].clientY; }, { passive: true });
     overlayEl.addEventListener('touchend', e => {
       const dy = _sy - e.changedTouches[0].clientY;
-      if (Math.abs(dy) < 50) return;
+      if (Math.abs(dy) < 50) {
+        // tap — toggle play/pause
+        if (overlayVideo) overlayVideo.paused ? overlayVideo.play().catch(() => {}) : overlayVideo.pause();
+        return;
+      }
       navigateOverlay(dy > 0 ? 1 : -1);
     }, { passive: true });
 
@@ -627,6 +631,7 @@
     video.className = 'overlay-video';
     video.addEventListener('playing', () => { video.poster = ''; }, { once: true });
     video.addEventListener('ended', () => { video.currentTime = 0; video.play().catch(() => {}); });
+    video.addEventListener('contextmenu', e => { e.preventDefault(); video.paused ? video.play().catch(() => {}) : video.pause(); });
     content.appendChild(video);
     overlayVideo = video;
 
@@ -702,6 +707,27 @@
       counter.className = 'overlay-counter';
       counter.textContent = `${overlayIdx + 1} / ${overlayCtx.length}`;
       controls.appendChild(counter);
+    }
+
+    // Bottom-center: prev / next nav buttons
+    if (overlayCtx.length > 1) {
+      const navDiv = document.createElement('div');
+      navDiv.className = 'overlay-nav-btns';
+      const prevNavBtn = document.createElement('button');
+      prevNavBtn.className = 'overlay-ctrl-btn overlay-nav-btn';
+      prevNavBtn.innerHTML = '&#8679;';
+      prevNavBtn.title = 'Previous';
+      prevNavBtn.disabled = overlayIdx <= 0;
+      prevNavBtn.addEventListener('click', e => { e.stopPropagation(); navigateOverlay(-1); });
+      const nextNavBtn = document.createElement('button');
+      nextNavBtn.className = 'overlay-ctrl-btn overlay-nav-btn';
+      nextNavBtn.innerHTML = '&#8681;';
+      nextNavBtn.title = 'Next';
+      nextNavBtn.disabled = overlayIdx >= overlayCtx.length - 1;
+      nextNavBtn.addEventListener('click', e => { e.stopPropagation(); navigateOverlay(1); });
+      navDiv.appendChild(prevNavBtn);
+      navDiv.appendChild(nextNavBtn);
+      controls.appendChild(navDiv);
     }
 
     content.appendChild(controls);
@@ -1799,6 +1825,14 @@
       video.className = 'player-video';
       video.addEventListener('playing', () => { video.poster = ''; }, { once: true });
       video.addEventListener('ended',   () => { video.currentTime = 0; video.play().catch(() => {}); });
+      video.addEventListener('contextmenu', e => { e.preventDefault(); video.paused ? video.play().catch(() => {}) : video.pause(); });
+      let _tsy = 0;
+      slide.addEventListener('touchstart', e => { _tsy = e.touches[0].clientY; }, { passive: true });
+      slide.addEventListener('touchend', e => {
+        if (Math.abs(_tsy - e.changedTouches[0].clientY) < 20) {
+          video.paused ? video.play().catch(() => {}) : video.pause();
+        }
+      }, { passive: true });
       slide.appendChild(video);
 
       // Controls overlay (same layout as desktop columns)
@@ -1921,13 +1955,9 @@
     video.playsInline = true;
     video.poster = coverSrc;
     video.className = 'player-video';
-    // Drop the poster as soon as real frames start rendering — prevents thumbnail flash on loop
     video.addEventListener('playing', () => { video.poster = ''; }, { once: true });
-    // Manual loop — avoids the black-frame flash that browser native loop produces
-    video.addEventListener('ended', () => {
-      video.currentTime = 0;
-      video.play().catch(() => {});
-    });
+    video.addEventListener('ended', () => { video.currentTime = 0; video.play().catch(() => {}); });
+    video.addEventListener('contextmenu', e => { e.preventDefault(); video.paused ? video.play().catch(() => {}) : video.pause(); });
     wrap.appendChild(video);
 
     const controls = document.createElement('div');
@@ -2061,6 +2091,10 @@ body:hover .ctl,.ctl.pinned{opacity:1}
 .cap{font-size:11px;color:rgba(255,255,255,.85);text-shadow:0 1px 3px rgba(0,0,0,.8);line-height:1.4;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .mu{position:absolute;bottom:10px;right:10px;pointer-events:auto}
 .ct{position:absolute;top:10px;left:50%;transform:translateX(-50%);font-size:11px;color:rgba(255,255,255,.35);pointer-events:none;white-space:nowrap}
+.nav{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);display:flex;gap:8px;pointer-events:auto}
+.navbtn{background:rgba(0,0,0,.5);border:none;border-radius:50%;color:#ddd;width:36px;height:36px;font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s}
+.navbtn:hover{background:rgba(0,0,0,.85)}
+.navbtn:disabled{opacity:.25;cursor:default}
 .picker{position:fixed;z-index:9999;background:#252525;border:1px solid #555;border-radius:8px;padding:8px;box-shadow:0 4px 20px rgba(0,0,0,.8)}
 .lpicker{display:flex;flex-direction:column;gap:3px}
 .lpbtn{background:#1e1e1e;border:1px solid #3a3a3a;border-radius:4px;color:#bbb;font-size:13px;font-weight:600;padding:5px 20px;cursor:pointer;text-align:center;white-space:nowrap}
@@ -2077,6 +2111,10 @@ body:hover .ctl,.ctl.pinned{opacity:1}
   <div class="rc" id="rc"></div>
   <div class="meta"><div class="au" id="au"></div><div class="cap" id="cp"></div></div>
   <div class="ct" id="ct"></div>
+  <div class="nav" id="nv">
+    <button class="navbtn" id="nb" title="Previous">&#8679;</button>
+    <button class="navbtn" id="pb" title="Next">&#8681;</button>
+  </div>
   <button class="b mu" id="mb"></button>
 </div>
 <script>
@@ -2155,7 +2193,7 @@ function showGrpPicker(btn,id){
 
 function render(){
   closePicker();
-  const v=document.getElementById('v'); v.pause();
+  v.pause();
   const item=vids[idx]; if(!item)return;
   v.poster=item.coverSrc; v.src=item.videoPath; v.muted=muted;
   v.play().catch(()=>{});
@@ -2193,13 +2231,19 @@ function render(){
   document.getElementById('cp').textContent=item.desc||'';
   document.getElementById('ct').textContent=vids.length>1?(idx+1)+' / '+vids.length:'';
   document.getElementById('mb').innerHTML=mi(muted);
+  document.getElementById('nb').disabled=idx<=0;
+  document.getElementById('pb').disabled=idx>=vids.length-1;
+  document.getElementById('nv').style.display=vids.length>1?'flex':'none';
 }
 
+const v=document.getElementById('v');
+v.addEventListener('contextmenu',e=>{e.preventDefault();v.paused?v.play().catch(()=>{}):v.pause();});
 document.getElementById('x').addEventListener('click',()=>window.close());
 document.getElementById('mb').addEventListener('click',()=>{
-  muted=!muted; document.getElementById('v').muted=muted;
-  document.getElementById('mb').innerHTML=mi(muted);
+  muted=!muted; v.muted=muted; document.getElementById('mb').innerHTML=mi(muted);
 });
+document.getElementById('nb').addEventListener('click',()=>{if(idx>0){idx--;render();}});
+document.getElementById('pb').addEventListener('click',()=>{if(idx<vids.length-1){idx++;render();}});
 document.addEventListener('keydown',e=>{
   if(e.key==='ArrowDown'||e.key==='ArrowRight'){if(idx<vids.length-1){idx++;render();}}
   else if(e.key==='ArrowUp'||e.key==='ArrowLeft'){if(idx>0){idx--;render();}}
@@ -2208,7 +2252,8 @@ document.addEventListener('keydown',e=>{
 let sy=0;
 document.addEventListener('touchstart',e=>{sy=e.touches[0].clientY;},{passive:true});
 document.addEventListener('touchend',e=>{
-  const dy=sy-e.changedTouches[0].clientY; if(Math.abs(dy)<50)return;
+  const dy=sy-e.changedTouches[0].clientY;
+  if(Math.abs(dy)<50){v.paused?v.play().catch(()=>{}):v.pause();return;}
   if(dy>0&&idx<vids.length-1){idx++;render();}
   else if(dy<0&&idx>0){idx--;render();}
 },{passive:true});
@@ -2537,6 +2582,14 @@ render();
         position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
         font-size: 12px; color: rgba(255,255,255,.4); pointer-events: none;
       }
+      .overlay-nav-btns {
+        position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
+        display: flex; gap: 8px; pointer-events: auto;
+      }
+      .overlay-nav-btn {
+        width: 36px !important; height: 36px !important; font-size: 20px !important;
+      }
+      .overlay-nav-btn:disabled { opacity: .25; cursor: default; }
 
       @media (max-width: 768px) {
         #video-overlay { align-items: stretch; }
