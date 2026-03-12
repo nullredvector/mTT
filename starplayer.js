@@ -93,8 +93,11 @@
     const v = E.videos && E.videos[videoId];
     if (!v) return { desc: '', authorName: '' };
     const a = E.authors && E.authors[v.authorId];
+    const desc = v.desc
+      || (E.videoDescriptions && E.videoDescriptions[videoId])
+      || '';
     return {
-      desc: v.desc || '',
+      desc,
       authorName: (a && (a.uniqueIds?.[0] || a.nicknames?.[0])) || '',
     };
   }
@@ -202,7 +205,8 @@
       const id  = getVideoIdFromSrc(src);
       if (!id || seen.has(id)) return;
       seen.add(id);
-      list.push({ id, coverSrc: src, videoPath: getVideoPath(src) });
+      const { authorName } = getVideoInfo(id);
+      list.push({ id, coverSrc: src, videoPath: getVideoPath(src), authorName });
     });
     return list;
   }
@@ -439,7 +443,9 @@
     const item = overlayCtx[overlayIdx];
     if (!item) return;
 
-    const { desc, authorName } = getVideoInfo(item.id);
+    const info = getVideoInfo(item.id);
+    const authorName = info.authorName || item.authorName || '';
+    const desc = info.desc || '';
 
     // Video
     const video = document.createElement('video');
@@ -1923,6 +1929,11 @@ render();
       .overlay-close:hover { background: rgba(0,0,0,.8); }
       .overlay-controls-layer {
         position: absolute; inset: 0; pointer-events: none;
+      }
+      .overlay-controls-layer::after {
+        content: ''; position: absolute; bottom: 0; left: 0; right: 0;
+        height: 120px; background: linear-gradient(transparent, rgba(0,0,0,.6));
+        pointer-events: none;
       }
       .overlay-right-center {
         position: absolute; right: 14px; top: 50%; transform: translateY(-50%);
