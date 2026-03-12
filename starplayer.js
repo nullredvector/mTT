@@ -1200,7 +1200,7 @@
     });
     cover.appendChild(rmBtn);
 
-    if ((isGlobalView || activeView === '__ungrouped__' || isInGroup) && groups.length > 0 && !onRemoveOverride) {
+    if ((isGlobalView || activeView === '__ungrouped__' || isInGroup) && groups.length > 0) {
       const addBtn = document.createElement('button');
       addBtn.className = 'stars-grid-add-group';
       addBtn.title = 'Add to group';
