@@ -11,6 +11,18 @@ services:
     labels:
       - com.centurylinklabs.watchtower.enable=true
 
+  startesting:
+    image: ghcr.io/nullredvector/starplayer:testing
+    restart: unless-stopped
+    ports:
+      - "9495:8080"
+    volumes:
+      - /mnt/zion/enc/archive/Downloads/incomplete/content2/shorts/testing:/archive
+    environment:
+      - ARCHIVE_DIR=/archive
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+
   watchtower:
     image: containrrr/watchtower
     restart: unless-stopped
