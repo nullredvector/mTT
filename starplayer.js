@@ -207,6 +207,44 @@
     }
   }
 
+  // Scrape author name and caption from row DOM siblings of a cover div.
+  // Works even when window.E / window._mftt are not available.
+  function scrapeRowMeta(coverDiv) {
+    const row = coverDiv.parentElement;
+    if (!row) return { authorName: '', desc: '' };
+    const scope = row.querySelector('.column-titles') || row;
+
+    let authorName = '';
+    let desc = '';
+
+    // Author: first short text (2–40 chars, no newlines)
+    const authorSelectors = ['a', '.link', '[class*="author"]', '[class*="Author"]',
+      '[class*="nick"]', '[class*="Nick"]', '[class*="user"]', '[class*="User"]',
+      '.searchable', '.underline'];
+    for (const sel of authorSelectors) {
+      const el = scope.querySelector(sel);
+      const t = el?.textContent?.trim();
+      if (t && t.length >= 2 && t.length <= 40 && !t.includes('\n')) {
+        authorName = t.replace(/^@/, '');
+        break;
+      }
+    }
+
+    // Caption: any text element whose content differs from the author name
+    const descSelectors = ['[class*="desc"]', '[class*="caption"]', '[class*="content"]',
+      '[class*="title"]', '.searchable', '.underline'];
+    for (const sel of descSelectors) {
+      const el = scope.querySelector(sel);
+      const t = el?.textContent?.trim();
+      if (t && t !== authorName && t !== '@' + authorName && t.length > 2) {
+        desc = t;
+        break;
+      }
+    }
+
+    return { authorName, desc };
+  }
+
   function buildContextFromDOM() {
     const list = [];
     const seen = new Set();
@@ -215,8 +253,9 @@
       const id  = getVideoIdFromSrc(src);
       if (!id || seen.has(id)) return;
       seen.add(id);
-      const { authorName } = getVideoInfo(id);
-      list.push({ id, coverSrc: src, videoPath: getVideoPath(src), authorName });
+      const coverDiv = img.closest('div.cover');
+      const { authorName, desc } = scrapeRowMeta(coverDiv);
+      list.push({ id, coverSrc: src, videoPath: getVideoPath(src), authorName, desc });
     });
     return list;
   }
@@ -455,7 +494,7 @@
 
     const info = getVideoInfo(item.id);
     const authorName = info.authorName || item.authorName || '';
-    const desc = info.desc || '';
+    const desc = info.desc || item.desc || '';
 
     // Video
     const video = document.createElement('video');
@@ -1028,50 +1067,23 @@
         console.log(`[Player] ${tabClass} via DOM thumbnails: ${ids.length}`);
       }
 
-      // Collect author names from whichever rows are currently visible in the DOM.
+      // Collect author names and captions from whichever rows are currently visible in the DOM.
       const authorMap = {};
+      const descMap = {};
       const covers = document.querySelectorAll('div.cover');
-
-      // Log the first video row (one that has an actual thumbnail)
-      const firstVideoRow = [...covers].find(c => c.querySelector('img.thumbnail'));
-      if (firstVideoRow) {
-        console.log('[Player author debug] first video row HTML:', firstVideoRow.parentElement?.innerHTML?.slice(0, 2000));
-      }
-
       covers.forEach(coverDiv => {
         const imgId = getVideoIdFromSrc(coverDiv.querySelector('img.thumbnail')?.getAttribute('src') || '');
         if (!imgId) return;
-        const row = coverDiv.parentElement;
-        if (!row) return;
-        // Try every likely candidate — anchor tags, .link, .searchable, .underline,
-        // or any element whose text looks like a short single-word handle
-        const scope = row.querySelector('.column-titles') || row;
-        const candidates = [
-          scope.querySelector('a'),
-          scope.querySelector('.link'),
-          scope.querySelector('.searchable'),
-          scope.querySelector('.underline'),
-          scope.querySelector('[class*="author"]'),
-          scope.querySelector('[class*="Author"]'),
-          scope.querySelector('[class*="nick"]'),
-          scope.querySelector('[class*="Nick"]'),
-          scope.querySelector('[class*="user"]'),
-          scope.querySelector('[class*="User"]'),
-        ];
-        for (const el of candidates) {
-          const t = el?.textContent?.trim();
-          if (t && t.length >= 2 && t.length <= 40 && !t.includes('\n')) {
-            authorMap[imgId] = t.replace(/^@/, '');
-            break;
-          }
-        }
+        const { authorName, desc } = scrapeRowMeta(coverDiv);
+        if (authorName) authorMap[imgId] = authorName;
+        if (desc) descMap[imgId] = desc;
       });
       console.log('[Player] author map sample:', Object.entries(authorMap).slice(0, 3));
 
       for (const id of ids) {
         if (seen.has(id)) continue;
         seen.add(id);
-        list.push({ id, videoPath: videoPath(id), coverSrc: coverPath(id), authorName: authorMap[id] || '' });
+        list.push({ id, videoPath: videoPath(id), coverSrc: coverPath(id), authorName: authorMap[id] || '', desc: descMap[id] || '' });
       }
     }
 
