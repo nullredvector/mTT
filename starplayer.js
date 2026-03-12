@@ -3117,6 +3117,8 @@ render();
         .player-column:not([data-col="0"]) { display: none; }
         /* Hotkeys are desktop-only */
         #player-hotkeys { display: none; }
+        /* Hide header bar on mobile — bottom nav replaces it */
+        #player-header { display: none !important; }
         /* Slightly bigger touch targets */
         .player-ctrl-btn { width: 52px; height: 52px; font-size: 22px; }
         .player-col-nav-btn { width: 42px !important; height: 42px !important; font-size: 20px !important; }
@@ -3274,8 +3276,6 @@ render();
           right: 12px; left: 12px; bottom: 74px;
         }
         #star-toggle { bottom: 70px; right: 12px; }
-        /* Hide player header entirely on mobile — nav bar replaces it */
-        #player-header { display: none !important; }
         /* Smaller grid min so more columns fit */
         #stars-grid { grid-template-columns: repeat(auto-fill, minmax(85px, 1fr)); }
 
