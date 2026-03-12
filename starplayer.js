@@ -1326,38 +1326,25 @@
 
     const picker = document.createElement('div');
     picker.id = 'level-picker';
-    picker.style.cssText = 'position:fixed;z-index:9999;background:#252525;border:1px solid #555;border-radius:8px;padding:8px 8px 10px;box-shadow:0 4px 20px rgba(0,0,0,.7);display:flex;flex-direction:column;align-items:center;gap:4px;';
 
     const currentLvl = levels[videoId] ?? null;
 
-    const clearBtn = document.createElement('button');
-    clearBtn.textContent = '×';
-    clearBtn.style.cssText = 'background:none;border:none;color:#888;font-size:16px;cursor:pointer;padding:0;line-height:1;align-self:stretch;text-align:center;';
-    clearBtn.title = 'Clear';
-    clearBtn.addEventListener('click', () => {
-      delete levels[videoId]; saveLevels();
-      onUpdate(null); picker.remove();
-    });
-    picker.appendChild(clearBtn);
-
-    const slider = document.createElement('input');
-    slider.type  = 'range';
-    slider.min   = 10;
-    slider.max   = 23;
-    slider.step  = 1;
-    slider.value = currentLvl != null ? currentLvl : 16;
-    slider.id    = 'level-picker-slider';
-    slider.addEventListener('input', () => {
-      const lvl = Number(slider.value);
-      levels[videoId] = lvl; saveLevels();
-      onUpdate(lvl);
-    });
-    picker.appendChild(slider);
+    for (let n = 10; n <= 23; n++) {
+      const btn = document.createElement('button');
+      btn.className = 'lvl-picker-btn' + (currentLvl === n ? ' cur' : '');
+      btn.textContent = n;
+      btn.addEventListener('click', () => {
+        if (currentLvl === n) { delete levels[videoId]; saveLevels(); onUpdate(null); }
+        else { levels[videoId] = n; saveLevels(); onUpdate(n); }
+        picker.remove();
+      });
+      picker.appendChild(btn);
+    }
 
     targetDoc.body.appendChild(picker);
     const rect = anchorBtn.getBoundingClientRect();
-    const pw = picker.offsetWidth || 50;
-    const ph = picker.offsetHeight || 160;
+    const pw = picker.offsetWidth || 120;
+    const ph = picker.offsetHeight || 120;
     picker.style.top  = Math.max(4, rect.top + rect.height / 2 - ph / 2) + 'px';
     picker.style.left = Math.max(4, rect.left - pw - 6) + 'px';
 
@@ -2537,12 +2524,19 @@ render();
       .stars-grid-author { font-size:11px; color:#999; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
       .stars-grid-desc   { font-size:11px; color:#666; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
-      /* ── Level picker popup (inline styles applied in JS; only slider style needed) ── */
-      #level-picker-slider {
-        writing-mode:vertical-lr; direction:rtl;
-        appearance:slider-vertical; -webkit-appearance:slider-vertical;
-        height:120px; width:28px; accent-color:#fe2c55; cursor:pointer; display:block;
+      /* ── Level picker popup ── */
+      #level-picker {
+        position:fixed; z-index:9999; background:#252525; border:1px solid #555;
+        border-radius:8px; padding:6px; box-shadow:0 4px 20px rgba(0,0,0,.7);
+        display:grid; grid-template-columns:repeat(2,1fr); gap:4px;
       }
+      .lvl-picker-btn {
+        background:#1e1e1e; border:1px solid #3a3a3a; border-radius:4px;
+        color:#bbb; font-size:12px; font-weight:700; padding:5px 10px;
+        cursor:pointer; transition:background .1s, color .1s;
+      }
+      .lvl-picker-btn:hover { background:#2a2a2a; color:#fff; }
+      .lvl-picker-btn.cur   { background:#fe2c55; border-color:#fe2c55; color:#fff; }
 
       /* ── Overlay lvl button ── */
       .overlay-lvl-btn { font-size:11px; font-weight:700; letter-spacing:.5px; }
