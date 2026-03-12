@@ -89,17 +89,22 @@
 
   function getVideoInfo(videoId) {
     const id = String(videoId);
-    const E = window.E;
-    if (E) {
-      // Description: E.videoDescriptions is keyed by videoId string
-      const desc = (E.videoDescriptions && (E.videoDescriptions[id] || E.videoDescriptions[videoId])) || '';
-      // Author: uniqueId (@handle) only, via videos → authors chain
-      const v    = E.videos && (E.videos[id] || E.videos[videoId]);
-      const a    = v && E.authors && E.authors[v.authorId];
-      const authorName = (a && a.uniqueIds?.[0]) || '';
-      if (desc || authorName) return { desc, authorName };
+    const mftt = window._mftt;
+
+    // Description: captured from window.dbvd assignment in db.js
+    const dbvd = mftt && mftt.dbvd;
+    const desc = (dbvd && (dbvd[id] || dbvd[videoId])) || '';
+
+    // Author: from captured window.db data (videos → authors chain)
+    let authorName = '';
+    const data = mftt && mftt._c && mftt._c[0] && mftt._c[0].data;
+    if (data) {
+      const v = data.videos && (data.videos[id] || data.videos[videoId]);
+      const a = v && data.authors && data.authors[v.authorId];
+      authorName = (a && a.uniqueIds && a.uniqueIds[0]) || '';
     }
-    return { desc: '', authorName: '' };
+
+    return { desc, authorName };
   }
 
   function tabForCover(coverSrc) {
