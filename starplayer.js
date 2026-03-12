@@ -87,35 +87,86 @@
     return coverSrc.replace('/covers/', '/videos/').replace(/\.jpg$/, '.mp4');
   }
 
+  // Cache of the archive data object found in React state
+  let _archiveData = null;
+
+  // Walk the React fiber tree to find the component state that holds
+  // { videoDescriptions, videos, authors } — app.js deletes window.db/dbvd
+  // after consuming them, so the fiber is the only reliable source.
+  function findArchiveData() {
+    if (_archiveData && _archiveData.videoDescriptions) return _archiveData;
+
+    const candidates = [
+      document.getElementById('archive'),
+      document.querySelector('main'),
+      document.body,
+    ].filter(Boolean);
+
+    let rootFiber = null;
+    for (const el of candidates) {
+      const k = Object.keys(el).find(k =>
+        k.startsWith('__reactFiber') || k.startsWith('__reactInternalInstance'));
+      if (k) { rootFiber = el[k]; break; }
+    }
+    if (!rootFiber) return null;
+
+    function isArchiveObj(v) {
+      return v && typeof v === 'object' && v.videoDescriptions && v.videos;
+    }
+
+    // Walk a function-component hook linked list
+    function searchHooks(hook) {
+      let h = hook;
+      while (h) {
+        const v = h.memoizedState;
+        if (isArchiveObj(v)) return v;
+        // Context value lives one level deeper for some hook shapes
+        if (v && typeof v === 'object' && isArchiveObj(v.value)) return v.value;
+        h = h.next;
+      }
+      return null;
+    }
+
+    const stack = [rootFiber];
+    let walked = 0;
+    while (stack.length && walked < 200000) {
+      const fiber = stack.pop();
+      if (!fiber) continue;
+      walked++;
+
+      // Class component state
+      if (fiber.memoizedState && !fiber.memoizedState.next) {
+        if (isArchiveObj(fiber.memoizedState)) {
+          _archiveData = fiber.memoizedState; return _archiveData;
+        }
+      }
+      // Function component hooks (linked list — has .next)
+      if (fiber.memoizedState && fiber.memoizedState.next !== undefined) {
+        const found = searchHooks(fiber.memoizedState);
+        if (found) { _archiveData = found; return _archiveData; }
+      }
+      // Context.Provider value prop
+      const p = fiber.memoizedProps;
+      if (p) {
+        if (isArchiveObj(p.value)) { _archiveData = p.value; return _archiveData; }
+        if (isArchiveObj(p))       { _archiveData = p;       return _archiveData; }
+      }
+
+      if (fiber.sibling) stack.push(fiber.sibling);
+      if (fiber.child)   stack.push(fiber.child);
+    }
+    return null;
+  }
+
   function getVideoInfo(videoId) {
-    const id = String(videoId);
-    const mftt = window._mftt;
+    const id   = String(videoId);
+    const data = findArchiveData();
+    if (!data) return { desc: '', authorName: '' };
 
-    // One-time debug dump — remove once caption is working
-    if (!getVideoInfo._debugged) {
-      getVideoInfo._debugged = true;
-      console.log('[sp] looking up videoId:', id);
-      console.log('[sp] window.db  type:', typeof window.db,   '| truthy:', !!window.db);
-      console.log('[sp] window.dbvd type:', typeof window.dbvd, '| truthy:', !!window.dbvd);
-      console.log('[sp] window.E   type:', typeof window.E,    '| truthy:', !!window.E);
-      if (window.E)    console.log('[sp] window.E keys:', Object.keys(window.E));
-      if (window.db   && typeof window.db   === 'object') console.log('[sp] window.db keys:', Object.keys(window.db).slice(0,10));
-      if (window.dbvd && typeof window.dbvd === 'object') console.log('[sp] window.dbvd sample:', Object.entries(window.dbvd).slice(0,1));
-    }
-
-    // Description: captured from window.dbvd assignment in db.js
-    const dbvd = mftt && mftt.dbvd;
-    const desc = (dbvd && (dbvd[id] || dbvd[videoId])) || '';
-
-    // Author: from captured window.db data (videos → authors chain)
-    let authorName = '';
-    const data = mftt && mftt._c && mftt._c[0] && mftt._c[0].data;
-    if (data) {
-      const v = data.videos && (data.videos[id] || data.videos[videoId]);
-      const a = v && data.authors && data.authors[v.authorId];
-      authorName = (a && a.uniqueIds && a.uniqueIds[0]) || '';
-    }
-
+    const desc = (data.videoDescriptions[id] || data.videoDescriptions[videoId]) || '';
+    const v    = data.videos[id] || data.videos[videoId];
+    const a    = v && data.authors && data.authors[v.authorId];
+    const authorName = (a && a.uniqueIds && a.uniqueIds[0]) || '';
     return { desc, authorName };
   }
 
