@@ -920,7 +920,7 @@
     // ── Ungrouped ─────────────────────────────────────────────────────────────
     const groupedIds = new Set(groups.flatMap(g => g.videoIds));
     const ungroupedStarCount  = Object.keys(stars).filter(id => !groupedIds.has(id)).length;
-    const ungroupedLvlCount   = Object.keys(levels).filter(id => !stars[id]).length;
+    const ungroupedLvlCount   = Object.keys(levels).filter(id => !stars[id] && !groupedIds.has(id)).length;
     const ungroupedTotal      = ungroupedStarCount + ungroupedLvlCount;
     const ungroupedItem = makeSidebarItem('__ungrouped__', 'Ungrouped', ungroupedTotal);
     ungroupedItem.addEventListener('click', () => { activeView = '__ungrouped__'; activeGroupIds.clear(); renderStarsView(); });
@@ -1062,7 +1062,7 @@
         .filter(([id]) => !groupedIdsSet.has(id))
         .map(([key, s]) => ({ ...s, id: key }));
       const lvlOnlyVideos = Object.entries(levels)
-        .filter(([id]) => !stars[id] && levels[id] != null)
+        .filter(([id]) => !stars[id] && levels[id] != null && !groupedIdsSet.has(id))
         .map(([id, n]) => ({
           id,
           coverSrc: `data/Likes/covers/${id}.jpg`,
