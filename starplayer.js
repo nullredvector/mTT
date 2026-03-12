@@ -2119,16 +2119,24 @@ body:hover .ctl,.ctl.pinned{opacity:1}
 </div>
 <script>
 const SK='myfavett_stars_v1',GK='myfavett_groups_v1',LK='myfavett_levels_v1';
+const API='${location.origin}/api/stars';
 let vids=${safeJson(vidList)};
 let idx=${vidOffset};
 let muted=true;
 
 function ls(){try{return JSON.parse(localStorage.getItem(SK)||'{}')}catch(_){return{}}}
-function ss(s){localStorage.setItem(SK,JSON.stringify(s))}
 function lg(){try{return JSON.parse(localStorage.getItem(GK)||'[]')}catch(_){return[]}}
-function sg(g){localStorage.setItem(GK,JSON.stringify(g))}
 function ll(){try{return JSON.parse(localStorage.getItem(LK)||'{}')}catch(_){return{}}}
-function sl(l){localStorage.setItem(LK,JSON.stringify(l))}
+
+function syncAll(s,g,l){
+  // Persist to server
+  fetch(API,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({stars:s,groups:g,levels:l})}).catch(()=>{});
+  // Live-update main window in-memory state
+  try{const op=window.opener;if(op&&!op.closed&&op._mfttWin){op._mfttWin.applyStars(s);op._mfttWin.applyGroups(g);op._mfttWin.applyLevels(l);}}catch(_){}
+}
+function ss(s){localStorage.setItem(SK,JSON.stringify(s));syncAll(s,lg(),ll());}
+function sg(g){localStorage.setItem(GK,JSON.stringify(g));syncAll(ls(),g,ll());}
+function sl(l){localStorage.setItem(LK,JSON.stringify(l));syncAll(ls(),lg(),l);}
 
 function mi(m){
   return m
@@ -2352,6 +2360,13 @@ render();
 
     watchNavClicks();
   }
+
+  // ── Expose live API for pop-out windows ──────────────────────────────────
+  window._mfttWin = {
+    applyStars:  s  => { stars  = s;  saveStarsLocal();  refreshAllButtons(); updateToggleBtn(); if (starsTabActive) renderStarsView(); },
+    applyGroups: g  => { groups = g;  saveGroupsLocal(); if (starsTabActive) renderStarsView(); },
+    applyLevels: lv => { levels = lv; saveLevelsLocal(); if (starsTabActive) renderStarsView(); },
+  };
 
   // ═══════════════════════════════════════════════════════════════════════════
   // STYLES
