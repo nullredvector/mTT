@@ -552,6 +552,12 @@
       playerVideoList = contextList;
       playerColumnOffsets = [startIdx];
       document.querySelector('nav .player-tab')?.classList.add('active');
+      if (!playerViewEl) {
+        playerViewEl = document.createElement('div');
+        playerViewEl.id = 'player-view';
+        document.body.appendChild(playerViewEl);
+      }
+      playerViewEl.style.display = 'flex';
       renderMobilePlayerContent();
       return;
     }
