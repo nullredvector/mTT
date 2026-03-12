@@ -1991,6 +1991,38 @@
       overlay.appendChild(stage);
     } else {
       renderMobileScrollFeed(overlay);
+      // Mobile: swipe on the overlay container (more reliable than per-slide)
+      let _otsx = 0, _otsy = 0, _odir = null, _oswiping = false;
+      overlay.addEventListener('touchstart', e => {
+        _otsx = e.touches[0].clientX; _otsy = e.touches[0].clientY;
+        _odir = null; _oswiping = false;
+      }, { passive: true });
+      overlay.addEventListener('touchmove', e => {
+        const dx = e.touches[0].clientX - _otsx;
+        const dy = e.touches[0].clientY - _otsy;
+        if (!_odir && (Math.abs(dx) > 8 || Math.abs(dy) > 8))
+          _odir = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
+        if (_odir !== 'h') return;
+        const tidx = MOBILE_TABS.indexOf(activeMobileTab);
+        if ((dx < 0 && tidx >= MOBILE_TABS.length - 1) || (dx > 0 && tidx <= 0)) return;
+        _oswiping = true;
+        overlay.style.transform = `translateX(${dx * 0.35}px)`;
+        showSwipeHint(dx, tidx);
+      }, { passive: true });
+      overlay.addEventListener('touchend', e => {
+        const dx = e.changedTouches[0].clientX - _otsx;
+        const dy = e.changedTouches[0].clientY - _otsy;
+        hideSwipeHint();
+        if (!_oswiping) return;
+        if (Math.abs(dx) >= 60 && Math.abs(dx) > Math.abs(dy)) {
+          const tidx = MOBILE_TABS.indexOf(activeMobileTab);
+          const newTab = dx < 0 ? MOBILE_TABS[tidx + 1] : MOBILE_TABS[tidx - 1];
+          if (newTab) { doSwipe(newTab, dx < 0 ? 'left' : 'right', overlay); return; }
+        }
+        overlay.style.transition = 'transform 0.2s ease';
+        overlay.style.transform = '';
+        setTimeout(() => { overlay.style.transition = ''; }, 200);
+      }, { passive: true });
     }
 
     document.body.appendChild(overlay);
@@ -2047,6 +2079,99 @@
       counter.title = `Showing first ${MOBILE_CAP} of ${total}`;
     }
 
+    // ── Single fixed controls layer (stays put while videos scroll) ──────────
+    let currentMuted = true;
+    let currentItem  = null;
+    let currentVid   = null;
+
+    const ctrlLayer = document.createElement('div');
+    ctrlLayer.id = 'player-overlay-controls';
+
+    const rightCenter = document.createElement('div');
+    rightCenter.className = 'player-right-center';
+
+    const starBtn = document.createElement('button');
+    starBtn.className = 'player-ctrl-btn player-star-btn';
+    starBtn.innerHTML = '★';
+    starBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      if (!currentItem) return;
+      toggleStar(currentItem.id, currentItem.coverSrc);
+      starBtn.classList.toggle('active', Boolean(stars[currentItem.id]));
+      starBtn.title = stars[currentItem.id] ? 'Remove from Stars' : 'Add to Stars';
+    });
+
+    const lvlBtn = document.createElement('button');
+    lvlBtn.className = 'player-ctrl-btn player-lvl-btn';
+    lvlBtn.title = 'Set level';
+    lvlBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      if (!currentItem) return;
+      showLevelPicker(lvlBtn, currentItem.id, newLvl => {
+        lvlBtn.textContent = newLvl != null ? String(newLvl) : 'lvl';
+        lvlBtn.classList.toggle('active', newLvl != null);
+        if (starsTabActive) renderStarsView();
+      });
+    });
+
+    const groupBtn = document.createElement('button');
+    groupBtn.className = 'player-ctrl-btn player-group-btn';
+    groupBtn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>';
+    groupBtn.title = 'Add to group';
+    groupBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      if (!currentItem) return;
+      showGroupPicker(groupBtn, currentItem.id);
+    });
+
+    const muteBtn = document.createElement('button');
+    muteBtn.className = 'player-ctrl-btn player-mute-btn';
+    muteBtn.innerHTML = muteIcon(true);
+    muteBtn.title = 'Unmute';
+    muteBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      currentMuted = !currentMuted;
+      if (currentVid) currentVid.muted = currentMuted;
+      muteBtn.innerHTML = muteIcon(currentMuted);
+      muteBtn.title = currentMuted ? 'Unmute' : 'Mute';
+    });
+
+    rightCenter.appendChild(starBtn);
+    rightCenter.appendChild(lvlBtn);
+    rightCenter.appendChild(groupBtn);
+    rightCenter.appendChild(muteBtn);
+    ctrlLayer.appendChild(rightCenter);
+
+    const authorEl  = document.createElement('div');
+    authorEl.className = 'player-author';
+    ctrlLayer.appendChild(authorEl);
+
+    const captionEl = document.createElement('div');
+    captionEl.className = 'player-caption';
+    ctrlLayer.appendChild(captionEl);
+
+    overlay.appendChild(ctrlLayer);
+
+    // Called by IntersectionObserver each time a new slide becomes dominant
+    function updateControls(item, vid) {
+      currentItem = item;
+      currentVid  = vid;
+      vid.muted   = currentMuted;
+
+      starBtn.classList.toggle('active', Boolean(stars[item.id]));
+      starBtn.title = stars[item.id] ? 'Remove from Stars' : 'Add to Stars';
+
+      lvlBtn.textContent = levels[item.id] != null ? String(levels[item.id]) : 'lvl';
+      lvlBtn.classList.toggle('active', levels[item.id] != null);
+
+      const info    = getVideoInfo(item.id);
+      const name    = info.authorName || item.authorName || '';
+      const caption = info.desc || '';
+      authorEl.textContent  = name ? '@' + name : '';
+      captionEl.textContent = caption.length > 120 ? caption.slice(0, 120) + '…' : caption;
+    }
+    // ── End fixed controls layer ─────────────────────────────────────────────
+
     const videoEls = [];
 
     renderList.forEach((item, idx) => {
@@ -2058,128 +2183,26 @@
       const video = document.createElement('video');
       video.src = item.videoPath;
       video.preload = 'none';
-      video.muted = true;
+      video.muted = currentMuted;
       video.playsInline = true;
       video.poster = item.coverSrc;
       video.className = 'player-video';
       video.addEventListener('playing', () => { video.poster = ''; }, { once: true });
       video.addEventListener('ended',   () => { video.currentTime = 0; video.play().catch(() => {}); });
       video.addEventListener('contextmenu', e => { e.preventDefault(); video.paused ? video.play().catch(() => {}) : video.pause(); });
-      let _tsx = 0, _tsy = 0, _sdir = null, _sswiping = false;
-      slide.addEventListener('touchstart', e => {
-        _tsx = e.touches[0].clientX; _tsy = e.touches[0].clientY;
-        _sdir = null; _sswiping = false;
-      }, { passive: true });
-      slide.addEventListener('touchmove', e => {
-        const dx = e.touches[0].clientX - _tsx;
-        const dy = e.touches[0].clientY - _tsy;
-        if (!_sdir && (Math.abs(dx) > 8 || Math.abs(dy) > 8))
-          _sdir = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
-        if (_sdir !== 'h') return;
-        const tidx = MOBILE_TABS.indexOf(activeMobileTab);
-        if ((dx < 0 && tidx >= MOBILE_TABS.length - 1) || (dx > 0 && tidx <= 0)) return;
-        _sswiping = true;
-        const ov = document.getElementById('player-overlay');
-        if (ov) ov.style.transform = `translateX(${dx * 0.35}px)`;
-        showSwipeHint(dx, tidx);
-      }, { passive: true });
+
+      let _stx = 0, _sty = 0;
+      slide.addEventListener('touchstart', e => { _stx = e.touches[0].clientX; _sty = e.touches[0].clientY; }, { passive: true });
       slide.addEventListener('touchend', e => {
-        const dx = e.changedTouches[0].clientX - _tsx;
-        const dy = e.changedTouches[0].clientY - _tsy;
-        hideSwipeHint();
-        if (_sswiping) {
-          const ov = document.getElementById('player-overlay');
-          if (Math.abs(dx) >= 60 && Math.abs(dx) > Math.abs(dy)) {
-            const tidx = MOBILE_TABS.indexOf(activeMobileTab);
-            const newTab = dx < 0 ? MOBILE_TABS[tidx + 1] : MOBILE_TABS[tidx - 1];
-            if (newTab) { doSwipe(newTab, dx < 0 ? 'left' : 'right', ov); return; }
-          }
-          // snap back
-          if (ov) { ov.style.transition = 'transform 0.2s ease'; ov.style.transform = ''; setTimeout(() => { ov.style.transition = ''; }, 200); }
-          return;
-        }
-        // Tap → toggle play/pause
-        if (Math.abs(dx) < 20 && Math.abs(dy) < 20) {
+        const dx = e.changedTouches[0].clientX - _stx;
+        const dy = e.changedTouches[0].clientY - _sty;
+        // Tap only — overlay handles horizontal swipe, feed handles vertical scroll
+        if (Math.abs(dx) < 15 && Math.abs(dy) < 15) {
           video.paused ? video.play().catch(() => {}) : video.pause();
         }
       }, { passive: true });
+
       slide.appendChild(video);
-
-      // Controls overlay (same layout as desktop columns)
-      const controls = document.createElement('div');
-      controls.className = 'player-controls';
-
-      const rightCenter = document.createElement('div');
-      rightCenter.className = 'player-right-center';
-
-      const starBtn = document.createElement('button');
-      starBtn.className = 'player-ctrl-btn player-star-btn' + (stars[item.id] ? ' active' : '');
-      starBtn.innerHTML = '★';
-      starBtn.title = stars[item.id] ? 'Remove from Stars' : 'Add to Stars';
-      starBtn.addEventListener('click', e => {
-        e.stopPropagation();
-        toggleStar(item.id, item.coverSrc);
-        starBtn.classList.toggle('active', Boolean(stars[item.id]));
-        starBtn.title = stars[item.id] ? 'Remove from Stars' : 'Add to Stars';
-      });
-
-      const lvlBtn = document.createElement('button');
-      lvlBtn.className = 'player-ctrl-btn player-lvl-btn';
-      lvlBtn.textContent = levels[item.id] != null ? String(levels[item.id]) : 'lvl';
-      lvlBtn.title = 'Set level';
-      lvlBtn.addEventListener('click', e => {
-        e.stopPropagation();
-        showLevelPicker(lvlBtn, item.id, newLvl => {
-          lvlBtn.textContent = newLvl != null ? String(newLvl) : 'lvl';
-          lvlBtn.classList.toggle('active', newLvl != null);
-          if (starsTabActive) renderStarsView();
-        });
-      });
-
-      const groupBtn = document.createElement('button');
-      groupBtn.className = 'player-ctrl-btn player-group-btn';
-      groupBtn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>';
-      groupBtn.title = 'Add to group';
-      groupBtn.addEventListener('click', e => { e.stopPropagation(); showGroupPicker(groupBtn, item.id); });
-
-      rightCenter.appendChild(starBtn);
-      rightCenter.appendChild(lvlBtn);
-      rightCenter.appendChild(groupBtn);
-      controls.appendChild(rightCenter);
-
-      {
-        const info = getVideoInfo(item.id);
-        const name = info.authorName || item.authorName || '';
-        const caption = info.desc || '';
-        if (name) {
-          const auth = document.createElement('div');
-          auth.className = 'player-author';
-          auth.textContent = '@' + name;
-          controls.appendChild(auth);
-        }
-        if (caption) {
-          const cap = document.createElement('div');
-          cap.className = 'player-caption';
-          cap.textContent = caption.length > 120 ? caption.slice(0, 120) + '…' : caption;
-          controls.appendChild(cap);
-        }
-      }
-
-      let muted = true;
-      const muteBtn = document.createElement('button');
-      muteBtn.className = 'player-ctrl-btn player-mute-btn';
-      muteBtn.innerHTML = muteIcon(true);
-      muteBtn.title = 'Unmute';
-      muteBtn.addEventListener('click', e => {
-        e.stopPropagation();
-        muted = !muted;
-        video.muted = muted;
-        muteBtn.innerHTML = muteIcon(muted);
-        muteBtn.title = muted ? 'Unmute' : 'Mute';
-      });
-      controls.appendChild(muteBtn);
-
-      slide.appendChild(controls);
       feed.appendChild(slide);
       videoEls.push(video);
     });
@@ -2190,7 +2213,6 @@
       if (h > 0) {
         feed.querySelectorAll('.player-slide').forEach(s => { s.style.height = h + 'px'; });
       } else {
-        // Retry once more if layout hasn't resolved yet
         requestAnimationFrame(setSlideHeights);
       }
     };
@@ -2211,6 +2233,7 @@
         const vid = videoEls[idx];
         if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
           playerColumnOffsets[0] = idx;
+          updateControls(renderList[idx], vid);
           vid.play().catch(() => {});
           if (counter) counter.textContent = `${idx + 1} / ${rendered}`;
         } else {
@@ -2222,6 +2245,7 @@
     feed.querySelectorAll('.player-slide').forEach(s => io.observe(s));
 
     // Kick off the starting video
+    updateControls(renderList[startIdx], videoEls[startIdx]);
     videoEls[startIdx]?.play().catch(() => {});
     if (counter) counter.textContent = `${startIdx + 1} / ${rendered}`;
   }
@@ -2690,8 +2714,9 @@ render();
     if (isMobilePlayer()) {
       createMobileNav();
       setupMobileSwipe();
-      // Auto-open Home on page load
-      setTimeout(() => setMobileTab('home'), 600);
+      // Show loading overlay immediately, then open player
+      showMobilePlayerLoading();
+      setTimeout(() => { if (!playerOpen) setMobileTab('home'); }, 300);
     } else {
       const nav = document.querySelector('nav');
       if (nav) new MutationObserver(injectNavTabs).observe(nav, { childList: true });
@@ -3249,14 +3274,47 @@ render();
           right: 12px; left: 12px; bottom: 74px;
         }
         #star-toggle { bottom: 70px; right: 12px; }
-        /* Tighter player header */
-        #player-header { padding: 6px 10px; gap: 4px; }
-        #player-title { font-size: 13px; }
-        #player-counter { display: none; }
-        .player-nav-btn { padding: 6px 12px; }
-        .player-header-btn { padding: 5px 6px; }
+        /* Hide player header entirely on mobile — nav bar replaces it */
+        #player-header { display: none !important; }
         /* Smaller grid min so more columns fit */
         #stars-grid { grid-template-columns: repeat(auto-fill, minmax(85px, 1fr)); }
+
+        /* ── Mobile player: controls fixed to overlay, not scrolling with slide ── */
+        #player-overlay { overflow: hidden; }
+        .player-controls { display: none; }    /* hide per-slide controls */
+        #player-overlay-controls {              /* single fixed controls layer */
+          position: absolute; inset: 0; pointer-events: none; z-index: 10;
+        }
+        #player-overlay-controls .player-right-center {
+          position: absolute; right: 10px; bottom: 120px;
+          top: auto; transform: none;
+          display: flex; flex-direction: column; gap: 10px;
+          pointer-events: auto; align-items: center;
+        }
+        #player-overlay-controls .player-ctrl-btn {
+          width: 41px; height: 41px; font-size: 18px;
+        }
+        #player-overlay-controls .player-author {
+          position: absolute; bottom: 32px; left: 12px;
+          font-size: 13px; font-weight: 600; pointer-events: none;
+          text-shadow: 0 1px 4px rgba(0,0,0,.9); color: #fff;
+          max-width: 58%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        #player-overlay-controls .player-caption {
+          position: absolute; bottom: 14px; left: 12px;
+          font-size: 11px; color: rgba(255,255,255,.85); pointer-events: none;
+          text-shadow: 0 1px 3px rgba(0,0,0,.8);
+          max-width: 58%; line-height: 1.4;
+          display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+        }
+
+        /* Safe area inset for iPhone home indicator */
+        #sp-mobile-nav {
+          padding-bottom: env(safe-area-inset-bottom, 0px) !important;
+          height: calc(62px + env(safe-area-inset-bottom, 0px)) !important;
+        }
+        body { padding-bottom: calc(62px + env(safe-area-inset-bottom, 0px)) !important; }
+        #stars-view { max-height: calc(100vh - 62px - env(safe-area-inset-bottom, 0px)) !important; }
       }
 
       /* Very small phones: 2-col star panel grid */
