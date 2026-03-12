@@ -1483,7 +1483,9 @@
     });
   }
 
-  function setMobileTab(tab) {
+  function setMobileTab(tab, skipAnim) {
+    const oldIdx = MOBILE_TABS.indexOf(activeMobileTab);
+    const newIdx = MOBILE_TABS.indexOf(tab);
     activeMobileTab = tab;
     updateMobileNavActive();
     if (tab === 'home') {
@@ -1501,6 +1503,9 @@
       showMainContent();
       const cls = tab === 'recents' ? '.likes' : '.bookmarked';
       document.querySelector(`nav div${cls}`)?.click();
+    }
+    if (!skipAnim) {
+      requestAnimationFrame(() => applySwipeEnter(getSwipeViewEl(), newIdx > oldIdx ? 'left' : 'right'));
     }
   }
 
@@ -1525,21 +1530,108 @@
     document.body.appendChild(nav);
   }
 
+  const TAB_LABELS = { home: 'Home', stars: 'Stars', recents: 'Recents', favs: 'Favs' };
+
+  function getSwipeViewEl() {
+    if (activeMobileTab === 'home')    return document.getElementById('player-overlay');
+    if (activeMobileTab === 'stars')   return document.getElementById('stars-view');
+    return document.querySelector('main');
+  }
+
+  function applySwipeEnter(el, dir) {
+    if (!el) return;
+    const cls = dir === 'left' ? 'sp-enter-from-right' : 'sp-enter-from-left';
+    el.classList.remove('sp-enter-from-right', 'sp-enter-from-left');
+    void el.offsetWidth;
+    el.classList.add(cls);
+    el.addEventListener('animationend', () => el.classList.remove(cls), { once: true });
+  }
+
+  function doSwipe(newTab, dir, outEl) {
+    if (outEl) {
+      outEl.style.transition = 'transform 0.22s ease';
+      outEl.style.transform = `translateX(${dir === 'left' ? -110 : 110}vw)`;
+      setTimeout(() => {
+        outEl.style.transition = '';
+        outEl.style.transform = '';
+        setMobileTab(newTab, true);
+        requestAnimationFrame(() => applySwipeEnter(getSwipeViewEl(), dir));
+      }, 220);
+    } else {
+      setMobileTab(newTab, true);
+      requestAnimationFrame(() => applySwipeEnter(getSwipeViewEl(), dir));
+    }
+  }
+
+  function showSwipeHint(dx, fromIdx) {
+    let hint = document.getElementById('sp-swipe-hint');
+    if (!hint) return;
+    const isNext = dx < 0;
+    const targetIdx = fromIdx + (isNext ? 1 : -1);
+    if (targetIdx < 0 || targetIdx >= MOBILE_TABS.length) {
+      hint.style.opacity = '0'; return;
+    }
+    hint.querySelector('.sp-sh-label').textContent = TAB_LABELS[MOBILE_TABS[targetIdx]];
+    hint.querySelector('.sp-sh-arrow').textContent = isNext ? '›' : '‹';
+    hint.style.left   = isNext ? 'auto' : '0';
+    hint.style.right  = isNext ? '0'    : 'auto';
+    hint.style.borderRadius = isNext ? '10px 0 0 10px' : '0 10px 10px 0';
+    hint.style.opacity = String(Math.min(1, Math.abs(dx) / 80));
+  }
+
+  function hideSwipeHint() {
+    const hint = document.getElementById('sp-swipe-hint');
+    if (hint) { hint.style.opacity = '0'; }
+  }
+
+  function initSwipeHint() {
+    if (document.getElementById('sp-swipe-hint')) return;
+    const hint = document.createElement('div');
+    hint.id = 'sp-swipe-hint';
+    hint.innerHTML = '<span class="sp-sh-arrow"></span><span class="sp-sh-label"></span>';
+    document.body.appendChild(hint);
+  }
+
   function setupMobileSwipe() {
-    let _tsx = 0, _tsy = 0;
+    initSwipeHint();
+    let _tsx = 0, _tsy = 0, _swipeDir = null, _swiping = false, _outEl = null;
+
     document.addEventListener('touchstart', e => {
       _tsx = e.touches[0].clientX;
       _tsy = e.touches[0].clientY;
+      _swipeDir = null; _swiping = false;
+      _outEl = getSwipeViewEl();
     }, { passive: true });
+
+    document.addEventListener('touchmove', e => {
+      if (activeMobileTab === 'home') return; // slide handles home
+      const dx = e.touches[0].clientX - _tsx;
+      const dy = e.touches[0].clientY - _tsy;
+      if (!_swipeDir && (Math.abs(dx) > 8 || Math.abs(dy) > 8))
+        _swipeDir = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
+      if (_swipeDir !== 'h') return;
+      const idx = MOBILE_TABS.indexOf(activeMobileTab);
+      if ((dx < 0 && idx >= MOBILE_TABS.length - 1) || (dx > 0 && idx <= 0)) return;
+      _swiping = true;
+      if (_outEl) _outEl.style.transform = `translateX(${dx * 0.35}px)`;
+      showSwipeHint(dx, idx);
+    }, { passive: true });
+
     document.addEventListener('touchend', e => {
-      // Skip if player is open — player handles its own swipes
       if (activeMobileTab === 'home') return;
       const dx = e.changedTouches[0].clientX - _tsx;
       const dy = e.changedTouches[0].clientY - _tsy;
-      if (Math.abs(dx) < 60 || Math.abs(dx) <= Math.abs(dy)) return;
+      hideSwipeHint();
+      if (!_swiping) return;
+      if (Math.abs(dx) < 60 || Math.abs(dx) <= Math.abs(dy)) {
+        // snap back
+        if (_outEl) { _outEl.style.transition = 'transform 0.2s ease'; _outEl.style.transform = ''; setTimeout(() => { if (_outEl) _outEl.style.transition = ''; }, 200); }
+        return;
+      }
       const idx = MOBILE_TABS.indexOf(activeMobileTab);
-      if (dx < 0 && idx < MOBILE_TABS.length - 1) setMobileTab(MOBILE_TABS[idx + 1]);
-      else if (dx > 0 && idx > 0) setMobileTab(MOBILE_TABS[idx - 1]);
+      const newTab = dx < 0 ? MOBILE_TABS[idx + 1] : MOBILE_TABS[idx - 1];
+      if (!newTab) { if (_outEl) { _outEl.style.transform = ''; } return; }
+      doSwipe(newTab, dx < 0 ? 'left' : 'right', _outEl);
     }, { passive: true });
   }
 
@@ -1973,16 +2065,37 @@
       video.addEventListener('playing', () => { video.poster = ''; }, { once: true });
       video.addEventListener('ended',   () => { video.currentTime = 0; video.play().catch(() => {}); });
       video.addEventListener('contextmenu', e => { e.preventDefault(); video.paused ? video.play().catch(() => {}) : video.pause(); });
-      let _tsx = 0, _tsy = 0;
-      slide.addEventListener('touchstart', e => { _tsx = e.touches[0].clientX; _tsy = e.touches[0].clientY; }, { passive: true });
+      let _tsx = 0, _tsy = 0, _sdir = null, _sswiping = false;
+      slide.addEventListener('touchstart', e => {
+        _tsx = e.touches[0].clientX; _tsy = e.touches[0].clientY;
+        _sdir = null; _sswiping = false;
+      }, { passive: true });
+      slide.addEventListener('touchmove', e => {
+        const dx = e.touches[0].clientX - _tsx;
+        const dy = e.touches[0].clientY - _tsy;
+        if (!_sdir && (Math.abs(dx) > 8 || Math.abs(dy) > 8))
+          _sdir = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
+        if (_sdir !== 'h') return;
+        const tidx = MOBILE_TABS.indexOf(activeMobileTab);
+        if ((dx < 0 && tidx >= MOBILE_TABS.length - 1) || (dx > 0 && tidx <= 0)) return;
+        _sswiping = true;
+        const ov = document.getElementById('player-overlay');
+        if (ov) ov.style.transform = `translateX(${dx * 0.35}px)`;
+        showSwipeHint(dx, tidx);
+      }, { passive: true });
       slide.addEventListener('touchend', e => {
         const dx = e.changedTouches[0].clientX - _tsx;
         const dy = e.changedTouches[0].clientY - _tsy;
-        // Horizontal swipe → switch tab
-        if (Math.abs(dx) >= 60 && Math.abs(dx) > Math.abs(dy)) {
-          const idx = MOBILE_TABS.indexOf(activeMobileTab);
-          if (dx < 0 && idx < MOBILE_TABS.length - 1) setMobileTab(MOBILE_TABS[idx + 1]);
-          else if (dx > 0 && idx > 0) setMobileTab(MOBILE_TABS[idx - 1]);
+        hideSwipeHint();
+        if (_sswiping) {
+          const ov = document.getElementById('player-overlay');
+          if (Math.abs(dx) >= 60 && Math.abs(dx) > Math.abs(dy)) {
+            const tidx = MOBILE_TABS.indexOf(activeMobileTab);
+            const newTab = dx < 0 ? MOBILE_TABS[tidx + 1] : MOBILE_TABS[tidx - 1];
+            if (newTab) { doSwipe(newTab, dx < 0 ? 'left' : 'right', ov); return; }
+          }
+          // snap back
+          if (ov) { ov.style.transition = 'transform 0.2s ease'; ov.style.transform = ''; setTimeout(() => { ov.style.transition = ''; }, 200); }
           return;
         }
         // Tap → toggle play/pause
@@ -3056,6 +3169,24 @@ render();
         }
         .sp-nav-btn.sp-active { color: #fff; border-top-color: #fff; }
         .sp-nav-btn svg { flex-shrink: 0; }
+
+        /* ── Swipe hint indicator ── */
+        #sp-swipe-hint {
+          position: fixed; top: 50%; transform: translateY(-50%);
+          background: rgba(40,40,40,0.85); backdrop-filter: blur(10px);
+          color: #fff; display: flex; align-items: center; gap: 6px;
+          padding: 10px 16px; z-index: 700; pointer-events: none;
+          opacity: 0; font-size: 14px; font-weight: 600;
+          border: 1px solid rgba(255,255,255,0.12);
+          transition: opacity 0.05s;
+        }
+        .sp-sh-arrow { font-size: 22px; line-height: 1; }
+
+        /* ── View entrance animations ── */
+        @keyframes sp-enter-from-right { from { transform: translateX(100vw); } to { transform: translateX(0); } }
+        @keyframes sp-enter-from-left  { from { transform: translateX(-100vw); } to { transform: translateX(0); } }
+        .sp-enter-from-right { animation: sp-enter-from-right 0.25s cubic-bezier(0.4,0,0.2,1) both; }
+        .sp-enter-from-left  { animation: sp-enter-from-left  0.25s cubic-bezier(0.4,0,0.2,1) both; }
 
         /* Push all page content above the fixed bottom nav */
         body { padding-bottom: 62px !important; }
