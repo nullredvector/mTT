@@ -2828,9 +2828,13 @@ render();
         #player-view #player-counter { font-size: 12px; color: #666; flex: 1; text-align: center; }
         #player-view #player-feed { flex: 1; min-height: 0; }
 
-        /* ── Hide header chrome on mobile (logo + search) — nav moves to bottom ── */
-        header { height: auto !important; padding: 0 !important; }
-        header > *:not(nav) { display: none !important; }
+        /* ── Collapse header on mobile; nav is position:fixed so escapes overflow:hidden ── */
+        header {
+          height: 0 !important; min-height: 0 !important;
+          padding: 0 !important; margin: 0 !important;
+          border: none !important; background: transparent !important;
+          overflow: hidden !important;
+        }
 
         /* ── Hide Explain nav tab on mobile ── */
         nav > div.explain-tab { display: none !important; }
