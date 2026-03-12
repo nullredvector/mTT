@@ -511,18 +511,15 @@
     closePanel();
     const videoId = getVideoIdFromSrc(coverSrc);
     if (!videoId) return;
+    // In stars view, use the exact rendered list so order and lvl-only entries match
+    if (starsTabActive && starsContextList.length > 0) {
+      const idx = starsContextList.findIndex(v => v.id === videoId);
+      openVideoOverlay(idx >= 0 ? idx : 0, starsContextList);
+      return;
+    }
     const s0 = stars[videoId];
     const contextList = [starItemToCtx(s0 || { id: videoId, coverSrc })];
-    // Build full stars context when in Stars view
-    if (starsTabActive) {
-      const starList = Object.values(stars);
-      if (starList.length > 0) {
-        contextList.length = 0;
-        starList.forEach(s => contextList.push(starItemToCtx(s)));
-      }
-    }
-    const idx = contextList.findIndex(v => v.id === videoId);
-    openVideoOverlay(idx >= 0 ? idx : 0, contextList);
+    openVideoOverlay(0, contextList);
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -832,6 +829,7 @@
   let activeLvl      = new Set();   // empty = no filter; set of numbers = multi-select
   let lvlSectionOpen = true;
   let groupSortOrder = 'alpha';     // 'alpha' | 'count'
+  let starsContextList = [];        // mirrors the currently rendered video grid order
 
   function showStarsTab() {
     starsTabActive = true;
@@ -1079,6 +1077,7 @@
         `<span class="stars-main-title">Ungrouped</span>` +
         `<span class="stars-main-count">${videosToShow.length} video${videosToShow.length !== 1 ? 's' : ''}</span>`;
 
+      starsContextList = videosToShow.map(s => starItemToCtx(s.lvlOnly ? s : (stars[s.id] || s)));
       if (!videosToShow.length) {
         const empty = document.createElement('div');
         empty.id = 'stars-empty';
@@ -1141,6 +1140,7 @@
         `<span class="stars-main-title">${titleText}</span>` +
         `<span class="stars-main-count">${videosToShow.length} video${videosToShow.length !== 1 ? 's' : ''}</span>`;
 
+      starsContextList = videosToShow.map(s => starItemToCtx(s.lvlOnly ? s : (stars[s.id] || s)));
       if (!videosToShow.length) {
         const empty = document.createElement('div');
         empty.id = 'stars-empty';
