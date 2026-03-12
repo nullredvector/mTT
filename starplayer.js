@@ -782,19 +782,25 @@
   async function openPlayer() {
     if (starsTabActive) showMainContent();
     playerOpen = true;
-    playerColumnOffsets = Array.from({ length: numCols() }, (_, i) => i);
+
     if (isMobilePlayer()) {
+      // Mobile: collect video IDs FIRST while <main> is still visible.
+      // Tab-switching while <main> is hidden causes React to re-render into a
+      // hidden container → memory pressure → mobile page crash.
+      document.querySelector('nav .player-tab')?.classList.add('active');
+      playerVideoList = await buildVideoList();
+      if (!playerOpen) return; // user tapped another tab during collection
+      playerColumnOffsets = [0];
       showMobilePlayerView();
+      renderMobilePlayerContent();
     } else {
-      renderPlayerOverlay();
-    }
-    document.querySelector('nav .player-tab')?.classList.add('active');
-    playerVideoList = await buildVideoList();
-    if (playerOpen) {
+      // Desktop: show overlay immediately (loading state), then fill it.
       playerColumnOffsets = Array.from({ length: numCols() }, (_, i) => i);
-      if (isMobilePlayer()) {
-        renderMobilePlayerContent();
-      } else {
+      renderPlayerOverlay();
+      document.querySelector('nav .player-tab')?.classList.add('active');
+      playerVideoList = await buildVideoList();
+      if (playerOpen) {
+        playerColumnOffsets = Array.from({ length: numCols() }, (_, i) => i);
         renderPlayerOverlay();
       }
     }
