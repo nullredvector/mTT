@@ -90,6 +90,21 @@
     }).catch(() => { /* no server — localStorage is fine */ });
   })();
 
+  // Listen for changes broadcast from pop-out windows
+  (() => {
+    try {
+      const ch = new BroadcastChannel('myfaveTT_popout');
+      ch.onmessage = e => {
+        const { s, g, l } = e.data || {};
+        if (s) { stars  = s;  saveStarsLocal();  refreshAllButtons(); updateToggleBtn(); }
+        if (g) { groups = g;  saveGroupsLocal(); }
+        if (l) { levels = l;  saveLevelsLocal(); }
+        if (s || g || l) syncToServer();
+        if (starsTabActive) renderStarsView();
+      };
+    } catch (_) {}
+  })();
+
   // ═══════════════════════════════════════════════════════════════════════════
   // HELPERS
   // ═══════════════════════════════════════════════════════════════════════════
@@ -2065,9 +2080,14 @@
     );
     if (!win) { alert('Pop-out was blocked. Please allow pop-ups for this file and try again.'); return; }
 
-    const safeJson = obj => JSON.stringify(obj).replace(/<\/script>/gi, '<\\/script>');
+    const safeJson  = obj => JSON.stringify(obj).replace(/<\/script>/gi, '<\\/script>');
     const vidList   = startList != null ? startList : playerVideoList;
     const vidOffset = startIdx  != null ? startIdx  : (playerColumnOffsets[0] || 0);
+    // Snapshot current in-memory state so pop-out starts with fresh data
+    const initStars  = safeJson(stars);
+    const initGroups = safeJson(groups);
+    const initLevels = safeJson(levels);
+    const apiOrigin  = location.origin;
 
     win.document.write(`<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><title>myfaveTT</title>
@@ -2118,25 +2138,32 @@ body:hover .ctl,.ctl.pinned{opacity:1}
   <button class="b mu" id="mb"></button>
 </div>
 <script>
-const SK='myfavett_stars_v1',GK='myfavett_groups_v1',LK='myfavett_levels_v1';
-const API='${location.origin}/api/stars';
+const API='${apiOrigin}/api/stars';
 let vids=${safeJson(vidList)};
 let idx=${vidOffset};
 let muted=true;
 
-function ls(){try{return JSON.parse(localStorage.getItem(SK)||'{}')}catch(_){return{}}}
-function lg(){try{return JSON.parse(localStorage.getItem(GK)||'[]')}catch(_){return[]}}
-function ll(){try{return JSON.parse(localStorage.getItem(LK)||'{}')}catch(_){return{}}}
+// Start with a snapshot of the main window's current in-memory state
+let starsData=${initStars};
+let groupsData=${initGroups};
+let levelsData=${initLevels};
+
+function ls(){return starsData;}
+function lg(){return groupsData;}
+function ll(){return levelsData;}
+
+let _bc=null;
+try{_bc=new BroadcastChannel('myfaveTT_popout');}catch(_){}
 
 function syncAll(s,g,l){
-  // Persist to server
+  // Broadcast to main window (BroadcastChannel — most reliable cross-window path)
+  if(_bc) _bc.postMessage({s,g,l});
+  // Also hit the server directly as a safety net
   fetch(API,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({stars:s,groups:g,levels:l})}).catch(()=>{});
-  // Live-update main window in-memory state
-  try{const op=window.opener;if(op&&!op.closed&&op._mfttWin){op._mfttWin.applyStars(s);op._mfttWin.applyGroups(g);op._mfttWin.applyLevels(l);}}catch(_){}
 }
-function ss(s){localStorage.setItem(SK,JSON.stringify(s));syncAll(s,lg(),ll());}
-function sg(g){localStorage.setItem(GK,JSON.stringify(g));syncAll(ls(),g,ll());}
-function sl(l){localStorage.setItem(LK,JSON.stringify(l));syncAll(ls(),lg(),l);}
+function ss(s){starsData=s;syncAll(s,groupsData,levelsData);}
+function sg(g){groupsData=g;syncAll(starsData,g,levelsData);}
+function sl(l){levelsData=l;syncAll(starsData,groupsData,l);}
 
 function mi(m){
   return m
