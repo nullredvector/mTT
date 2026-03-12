@@ -1289,34 +1289,90 @@
   function showGroupPicker(anchorBtn, videoId) {
     const targetDoc = anchorBtn.ownerDocument || document;
     targetDoc.getElementById('stars-group-picker')?.remove();
-    if (!groups.length) return;
 
     const picker = document.createElement('div');
     picker.id = 'stars-group-picker';
-    picker.style.cssText = 'position:fixed;z-index:9999;background:#252525;border:1px solid #555;border-radius:6px;padding:6px 0;min-width:160px;box-shadow:0 4px 16px rgba(0,0,0,.6);';
 
-    groups.forEach(g => {
-      const row = document.createElement('label');
-      row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 14px;font-size:13px;cursor:pointer;color:#ccc;white-space:nowrap;';
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.checked = g.videoIds.includes(videoId);
-      cb.addEventListener('change', () => {
-        if (cb.checked) { if (!g.videoIds.includes(videoId)) g.videoIds.push(videoId); }
-        else g.videoIds = g.videoIds.filter(id => id !== videoId);
+    const list = document.createElement('div');
+    list.className = 'grp-picker-list';
+
+    const buildRows = () => {
+      list.innerHTML = '';
+      const sorted = [...groups].sort((a, b) => b.videoIds.length - a.videoIds.length);
+      if (!sorted.length) {
+        const empty = document.createElement('div');
+        empty.className = 'grp-picker-empty';
+        empty.textContent = 'No groups yet';
+        list.appendChild(empty);
+      }
+      sorted.forEach(g => {
+        const row = document.createElement('label');
+        row.className = 'grp-picker-row';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = g.videoIds.includes(videoId);
+        cb.addEventListener('change', () => {
+          if (cb.checked) { if (!g.videoIds.includes(videoId)) g.videoIds.push(videoId); }
+          else g.videoIds = g.videoIds.filter(id => id !== videoId);
+          saveGroups();
+          if (starsTabActive) renderStarsView();
+        });
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'grp-picker-name';
+        nameSpan.textContent = g.name;
+        const countSpan = document.createElement('span');
+        countSpan.className = 'grp-picker-count';
+        countSpan.textContent = g.videoIds.length;
+        row.appendChild(cb); row.appendChild(nameSpan); row.appendChild(countSpan);
+        list.appendChild(row);
+      });
+    };
+    buildRows();
+    picker.appendChild(list);
+
+    // ＋ New group inline form
+    const newRow = document.createElement('div');
+    newRow.className = 'grp-picker-new-row';
+    const addBtn = document.createElement('button');
+    addBtn.className = 'grp-picker-add-btn';
+    addBtn.textContent = '＋ New group';
+    addBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      addBtn.style.display = 'none';
+      inp.style.display = 'flex';
+      inp.querySelector('input').focus();
+    });
+    const inp = document.createElement('div');
+    inp.className = 'grp-picker-inp';
+    inp.style.display = 'none';
+    const field = document.createElement('input');
+    field.type = 'text'; field.placeholder = 'Group name'; field.maxLength = 40;
+    const ok = document.createElement('button');
+    ok.textContent = '✓'; ok.className = 'grp-picker-ok';
+    const commit = () => {
+      const name = field.value.trim();
+      if (name) {
+        const newG = { id: (Math.random().toString(36).slice(2)), name, videoIds: [videoId] };
+        groups.push(newG);
         saveGroups();
         if (starsTabActive) renderStarsView();
-      });
-      row.appendChild(cb);
-      row.appendChild(document.createTextNode(' ' + g.name));
-      picker.appendChild(row);
-    });
+        buildRows();
+      }
+      field.value = '';
+      inp.style.display = 'none';
+      addBtn.style.display = '';
+    };
+    ok.addEventListener('click', commit);
+    field.addEventListener('keydown', e => { if (e.key === 'Enter') commit(); e.stopPropagation(); });
+    inp.appendChild(field); inp.appendChild(ok);
+    newRow.appendChild(addBtn); newRow.appendChild(inp);
+    picker.appendChild(newRow);
 
     targetDoc.body.appendChild(picker);
     const rect = anchorBtn.getBoundingClientRect();
-    const pw = picker.offsetWidth || 160;
-    const ph = picker.offsetHeight || 100;
-    picker.style.top  = Math.max(4, rect.top + rect.height / 2 - ph / 2) + 'px';
+    const pw = picker.offsetWidth || 180;
+    const ph = picker.offsetHeight || 120;
+    picker.style.top  = Math.max(4, Math.min(rect.top + rect.height / 2 - ph / 2, window.innerHeight - ph - 8)) + 'px';
     picker.style.left = Math.max(4, rect.left - pw - 6) + 'px';
 
     setTimeout(() => {
@@ -2137,9 +2193,20 @@ body:hover .ctl,.ctl.pinned{opacity:1}
 .lpbtn{background:#1e1e1e;border:1px solid #3a3a3a;border-radius:4px;color:#bbb;font-size:13px;font-weight:600;padding:5px 20px;cursor:pointer;text-align:center;white-space:nowrap}
 .lpbtn:hover{background:#2a2a2a;color:#fff}
 .lpbtn.cur{background:#fe2c55;border-color:#fe2c55;color:#fff}
-.gpicker{display:flex;flex-direction:column;gap:2px;min-width:150px}
+.gpicker{display:flex;flex-direction:column;min-width:170px;max-height:320px}
+.gplst{overflow-y:auto;max-height:220px;display:flex;flex-direction:column;gap:1px;padding:4px 0}
+.gpempty{padding:8px 12px;font-size:12px;color:#555}
 .gprow{display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:13px;cursor:pointer;color:#ccc;white-space:nowrap;border-radius:4px}
 .gprow:hover{background:#333}
+.gpname{flex:1;overflow:hidden;text-overflow:ellipsis}
+.gpcnt{font-size:11px;color:#666;flex-shrink:0}
+.gpnew{border-top:1px solid #333;padding:6px 8px}
+.gpaddbt{background:none;border:none;color:#888;font-size:12px;cursor:pointer;padding:2px 4px;width:100%;text-align:left}
+.gpaddbt:hover{color:#ccc}
+.gpinf{display:flex;gap:4px;align-items:center}
+.gpinf input{flex:1;background:#1a1a1a;border:1px solid #444;border-radius:4px;color:#ccc;font-size:12px;padding:4px 6px;outline:none}
+.gpok{background:#333;border:none;border-radius:4px;color:#aaa;cursor:pointer;font-size:13px;padding:3px 7px}
+.gpok:hover{background:#444;color:#fff}
 </style></head><body>
 <video id="v" muted autoplay playsinline></video>
 <div class="ctl" id="c">
@@ -2223,22 +2290,49 @@ function showLvlPicker(btn,id){
 
 function showGrpPicker(btn,id){
   closePicker();
-  const grps=lg(); if(!grps.length)return;
   document.getElementById('c').classList.add('pinned');
   const p=document.createElement('div');
   p.className='picker gpicker';
-  grps.forEach(g=>{
-    const row=document.createElement('label');
-    row.className='gprow';
-    const cb=document.createElement('input');
-    cb.type='checkbox'; cb.checked=g.videoIds.includes(id);
-    cb.addEventListener('change',()=>{
-      const gs=lg(); const gi=gs.find(x=>x.id===g.id);
-      if(gi){if(cb.checked){if(!gi.videoIds.includes(id))gi.videoIds.push(id);}else gi.videoIds=gi.videoIds.filter(x=>x!==id); sg(gs);}
+
+  const lst=document.createElement('div'); lst.className='gplst'; p.appendChild(lst);
+  const buildRows=()=>{
+    lst.innerHTML='';
+    const sorted=[...lg()].sort((a,b)=>b.videoIds.length-a.videoIds.length);
+    if(!sorted.length){const e=document.createElement('div');e.className='gpempty';e.textContent='No groups yet';lst.appendChild(e);return;}
+    sorted.forEach(g=>{
+      const row=document.createElement('label'); row.className='gprow';
+      const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=g.videoIds.includes(id);
+      cb.addEventListener('change',()=>{
+        const gs=lg(); const gi=gs.find(x=>x.id===g.id);
+        if(gi){if(cb.checked){if(!gi.videoIds.includes(id))gi.videoIds.push(id);}else gi.videoIds=gi.videoIds.filter(x=>x!==id); sg(gs);}
+        buildRows();
+      });
+      const ns=document.createElement('span'); ns.className='gpname'; ns.textContent=g.name;
+      const cs=document.createElement('span'); cs.className='gpcnt'; cs.textContent=g.videoIds.length;
+      row.appendChild(cb); row.appendChild(ns); row.appendChild(cs); lst.appendChild(row);
     });
-    row.appendChild(cb); row.appendChild(document.createTextNode(' '+g.name));
-    p.appendChild(row);
-  });
+  };
+  buildRows();
+
+  const nr=document.createElement('div'); nr.className='gpnew'; p.appendChild(nr);
+  const ab=document.createElement('button'); ab.className='gpaddbt'; ab.textContent='＋ New group';
+  const inf=document.createElement('div'); inf.className='gpinf'; inf.style.display='none';
+  const fi=document.createElement('input'); fi.type='text'; fi.placeholder='Group name'; fi.maxLength=40;
+  const ok=document.createElement('button'); ok.textContent='✓'; ok.className='gpok';
+  const commit=()=>{
+    const name=fi.value.trim();
+    if(name){
+      const gs=lg();
+      gs.push({id:(Math.random().toString(36).slice(2)),name,videoIds:[id]});
+      sg(gs); buildRows();
+    }
+    fi.value=''; inf.style.display='none'; ab.style.display='';
+  };
+  ok.addEventListener('click',commit);
+  fi.addEventListener('keydown',e=>{if(e.key==='Enter')commit(); e.stopPropagation();});
+  ab.addEventListener('click',e=>{e.stopPropagation();ab.style.display='none';inf.style.display='flex';fi.focus();});
+  inf.appendChild(fi); inf.appendChild(ok); nr.appendChild(ab); nr.appendChild(inf);
+
   positionLeft(p,btn.getBoundingClientRect());
   setTimeout(()=>{document.addEventListener('click',function h(e){if(!p.contains(e.target)){closePicker();document.removeEventListener('click',h);}});},0);
 }
@@ -2529,6 +2623,26 @@ render();
       .stars-grid-add-group:hover { background:rgba(0,100,200,.7); color:#fff; }
       .stars-grid-author { font-size:11px; color:#999; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
       .stars-grid-desc   { font-size:11px; color:#666; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+      /* ── Group picker popup ── */
+      #stars-group-picker {
+        position:fixed; z-index:9999; background:#252525; border:1px solid #555;
+        border-radius:8px; box-shadow:0 4px 20px rgba(0,0,0,.7);
+        display:flex; flex-direction:column; min-width:180px; max-height:320px; overflow:hidden;
+      }
+      .grp-picker-list { overflow-y:auto; max-height:220px; display:flex; flex-direction:column; gap:1px; padding:4px 0; }
+      .grp-picker-empty { padding:8px 14px; font-size:12px; color:#555; }
+      .grp-picker-row { display:flex; align-items:center; gap:8px; padding:6px 12px; font-size:13px; cursor:pointer; color:#ccc; border-radius:0; }
+      .grp-picker-row:hover { background:#333; }
+      .grp-picker-name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .grp-picker-count { font-size:11px; color:#666; flex-shrink:0; }
+      .grp-picker-new-row { border-top:1px solid #333; padding:6px 8px; flex-shrink:0; }
+      .grp-picker-add-btn { background:none; border:none; color:#888; font-size:12px; cursor:pointer; padding:2px 4px; width:100%; text-align:left; }
+      .grp-picker-add-btn:hover { color:#ccc; }
+      .grp-picker-inp { display:flex; gap:4px; align-items:center; }
+      .grp-picker-inp input { flex:1; background:#1a1a1a; border:1px solid #444; border-radius:4px; color:#ccc; font-size:12px; padding:4px 6px; outline:none; }
+      .grp-picker-ok { background:#333; border:none; border-radius:4px; color:#aaa; cursor:pointer; font-size:13px; padding:3px 7px; }
+      .grp-picker-ok:hover { background:#444; color:#fff; }
 
       /* ── Level picker popup ── */
       #level-picker {
