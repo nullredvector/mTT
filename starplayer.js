@@ -830,6 +830,7 @@
   let activeGroupId  = 'all';
   let activeLvl      = new Set();  // empty = no filter; set of numbers = multi-select
   let lvlSectionOpen = true;
+  let groupSortOrder = 'alpha';   // 'alpha' | 'count'
 
   function showStarsTab() {
     starsTabActive = true;
@@ -912,11 +913,30 @@
     allItem.addEventListener('click', () => { activeGroupId = 'all'; activeLvl.clear(); renderStarsView(); });
     sidebar.appendChild(allItem);
 
+    // ── Ungrouped ─────────────────────────────────────────────────────────────
+    const groupedIds = new Set(groups.flatMap(g => g.videoIds));
+    const ungroupedStarCount  = Object.keys(stars).filter(id => !groupedIds.has(id)).length;
+    const ungroupedLvlCount   = Object.keys(levels).filter(id => !stars[id]).length;
+    const ungroupedTotal      = ungroupedStarCount + ungroupedLvlCount;
+    const ungroupedItem = makeSidebarItem('__ungrouped__', 'Ungrouped', ungroupedTotal);
+    ungroupedItem.addEventListener('click', () => { activeGroupId = '__ungrouped__'; renderStarsView(); });
+    sidebar.appendChild(ungroupedItem);
+
     const divider = document.createElement('hr');
     divider.className = 'stars-sidebar-divider';
     sidebar.appendChild(divider);
 
-    groups.forEach(g => {
+    // sort before rendering
+    const sortedGroups = [...groups].sort((a, b) => {
+      if (groupSortOrder === 'count') {
+        const ca = a.videoIds.filter(id => stars[id]).length;
+        const cb = b.videoIds.filter(id => stars[id]).length;
+        return cb - ca;
+      }
+      return a.name.localeCompare(b.name);
+    });
+
+    sortedGroups.forEach(g => {
       const count = g.videoIds.filter(id => stars[id]).length;
       const row = document.createElement('div');
       row.className = 'stars-group-row';
@@ -958,6 +978,18 @@
     newBtn.addEventListener('click', () => startNewGroup(sidebar));
     sidebar.appendChild(newBtn);
 
+    const sortSel = document.createElement('select');
+    sortSel.id = 'stars-group-sort';
+    sortSel.title = 'Sort groups';
+    [['alpha','A – Z'],['count','By count']].forEach(([val, label]) => {
+      const opt = document.createElement('option');
+      opt.value = val; opt.textContent = label;
+      if (val === groupSortOrder) opt.selected = true;
+      sortSel.appendChild(opt);
+    });
+    sortSel.addEventListener('change', () => { groupSortOrder = sortSel.value; renderStarsView(); });
+    sidebar.appendChild(sortSel);
+
     starsViewEl.appendChild(sidebar);
 
     // ── Main area ─────────────────────────────────────────────────────────────
@@ -992,15 +1024,15 @@
       } else {
         occupiedLvls.forEach(n => {
           const ids = levelGroupMap[n];
-          const recentId = ids[ids.length - 1];
-          const coverSrc = stars[recentId]?.coverSrc || '';
+          // prefer starred video for cover, fall back to guessed local path
+          const coverId = ids.find(id => stars[id]) || ids[ids.length - 1];
+          const coverSrc = stars[coverId]?.coverSrc || `data/Likes/covers/${coverId}.jpg`;
           const card = document.createElement('div');
           card.className = 'stars-lvl-group-card';
-          if (coverSrc) {
-            const img = document.createElement('img');
-            img.src = coverSrc; img.className = 'stars-lvl-group-img';
-            card.appendChild(img);
-          }
+          const img = document.createElement('img');
+          img.src = coverSrc; img.className = 'stars-lvl-group-img';
+          img.onerror = () => { img.style.display = 'none'; };
+          card.appendChild(img);
           const badge = document.createElement('div');
           badge.className = 'stars-lvl-group-badge';
           badge.textContent = n;
@@ -1015,8 +1047,44 @@
           grid.appendChild(card);
         });
       }
+    } else if (activeGroupId === '__ungrouped__') {
+      // ── Ungrouped view (ungrouped stars + lvl-only videos) ───────────────────
+      const groupedIdsSet = new Set(groups.flatMap(g => g.videoIds));
+      const ungroupedStars = Object.entries(stars)
+        .filter(([id]) => !groupedIdsSet.has(id))
+        .map(([key, s]) => ({ ...s, id: key }));
+      const lvlOnlyVideos = Object.entries(levels)
+        .filter(([id]) => !stars[id] && levels[id] != null)
+        .map(([id, n]) => ({
+          id,
+          coverSrc: `data/Likes/covers/${id}.jpg`,
+          authorName: '', desc: '', lvlOnly: true
+        }));
+      const baseVideos = [...ungroupedStars, ...lvlOnlyVideos];
+      const videosToShow = activeLvl.size > 0
+        ? baseVideos.filter(s => activeLvl.has(levels[s.id]))
+        : baseVideos;
+
+      mainHeader.innerHTML =
+        `<span class="stars-main-title">Ungrouped</span>` +
+        `<span class="stars-main-count">${videosToShow.length} video${videosToShow.length !== 1 ? 's' : ''}</span>`;
+
+      if (!videosToShow.length) {
+        const empty = document.createElement('div');
+        empty.id = 'stars-empty';
+        empty.textContent = 'No ungrouped videos.';
+        grid.appendChild(empty);
+      } else {
+        videosToShow.forEach(star => {
+          const { desc, authorName } = star.lvlOnly ? { desc: '', authorName: '' } : getVideoInfo(star.id);
+          const onRemove = star.lvlOnly
+            ? () => { delete levels[star.id]; saveLevels(); renderStarsView(); }
+            : null;
+          grid.appendChild(buildStarsGridCard(star, authorName, desc, onRemove));
+        });
+      }
     } else {
-      // ── Normal video grid ────────────────────────────────────────────────────
+      // ── Normal video grid (all / named group) ────────────────────────────────
       const currentGroupName = activeGroupId === 'all'
         ? 'All Stars'
         : (groups.find(g => g.id === activeGroupId)?.name || 'Stars');
@@ -1025,7 +1093,16 @@
         ? Object.entries(stars)
         : (groups.find(g => g.id === activeGroupId)?.videoIds || [])
             .filter(id => stars[id]).map(id => [id, stars[id]]);
-      const baseVideos = allPairs.map(([key, s]) => ({ ...s, id: key }));
+
+      // When filtering by lvl in All Stars, also include lvl-applied unstarred videos
+      let baseVideos = allPairs.map(([key, s]) => ({ ...s, id: key }));
+      if (activeLvl.size > 0 && activeGroupId === 'all') {
+        const starredIds = new Set(baseVideos.map(s => s.id));
+        const lvlOnly = Object.entries(levels)
+          .filter(([id, n]) => !starredIds.has(id) && activeLvl.has(n))
+          .map(([id]) => ({ id, coverSrc: `data/Likes/covers/${id}.jpg`, authorName: '', desc: '', lvlOnly: true }));
+        baseVideos = [...baseVideos, ...lvlOnly];
+      }
       const videosToShow = activeLvl.size > 0
         ? baseVideos.filter(s => activeLvl.has(levels[s.id]))
         : baseVideos;
@@ -1043,8 +1120,11 @@
         grid.appendChild(empty);
       } else {
         videosToShow.forEach(star => {
-          const { desc, authorName } = getVideoInfo(star.id);
-          grid.appendChild(buildStarsGridCard(star, authorName, desc));
+          const { desc, authorName } = star.lvlOnly ? { desc: '', authorName: '' } : getVideoInfo(star.id);
+          const onRemove = star.lvlOnly
+            ? () => { delete levels[star.id]; saveLevels(); renderStarsView(); }
+            : null;
+          grid.appendChild(buildStarsGridCard(star, authorName, desc, onRemove));
         });
       }
     }
@@ -1053,7 +1133,7 @@
     starsViewEl.appendChild(mainArea);
   }
 
-  function buildStarsGridCard(star, authorName, desc) {
+  function buildStarsGridCard(star, authorName, desc, onRemoveOverride) {
     const card = document.createElement('div');
     card.className = 'stars-grid-card';
 
@@ -1064,15 +1144,17 @@
     const img = document.createElement('img');
     img.src = star.coverSrc;
     img.loading = 'lazy';
+    img.onerror = () => { img.style.display = 'none'; };
     cover.appendChild(img);
 
     const rmBtn = document.createElement('button');
     rmBtn.className = 'stars-grid-remove';
-    rmBtn.title = activeGroupId === 'all' ? 'Remove from Stars' : 'Remove from group';
+    rmBtn.title = onRemoveOverride ? 'Remove level' : (activeGroupId === 'all' || activeGroupId === '__ungrouped__' ? 'Remove from Stars' : 'Remove from group');
     rmBtn.textContent = '✕';
     rmBtn.addEventListener('click', e => {
       e.stopPropagation();
-      if (activeGroupId === 'all') {
+      if (onRemoveOverride) { onRemoveOverride(); return; }
+      if (activeGroupId === 'all' || activeGroupId === '__ungrouped__') {
         toggleStar(star.id, star.coverSrc);
       } else {
         const g = groups.find(x => x.id === activeGroupId);
@@ -1081,7 +1163,7 @@
     });
     cover.appendChild(rmBtn);
 
-    if (activeGroupId === 'all' && groups.length > 0) {
+    if ((activeGroupId === 'all' || activeGroupId === '__ungrouped__') && groups.length > 0 && !star.lvlOnly && !onRemoveOverride) {
       const addBtn = document.createElement('button');
       addBtn.className = 'stars-grid-add-group';
       addBtn.title = 'Add to group';
@@ -2199,6 +2281,8 @@ render();
       .stars-group-delete:hover { color:#e55; }
       #stars-new-group-btn { margin:8px 10px 4px; padding:6px 10px; background:none; border:1px dashed #444; border-radius:5px; color:#666; cursor:pointer; font-size:12px; transition:border-color .15s,color .15s; text-align:left; }
       #stars-new-group-btn:hover { border-color:#777; color:#aaa; }
+      #stars-group-sort { margin:4px 10px 8px; padding:4px 6px; background:#1e1e1e; border:1px solid #3a3a3a; border-radius:4px; color:#888; font-size:11px; cursor:pointer; width:calc(100% - 20px); }
+      #stars-group-sort:hover { border-color:#666; color:#ccc; }
       .stars-inline-form { display:flex; align-items:center; gap:4px; padding:6px 8px; margin:4px 8px; }
       .stars-inline-input { flex:1; min-width:0; background:#2a2a2a; border:1px solid #555; border-radius:4px; color:#ddd; font-size:12px; padding:4px 6px; outline:none; }
       .stars-inline-input:focus { border-color:#888; }
