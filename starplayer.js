@@ -819,7 +819,8 @@
   let starsTabActive = false;
   let starsViewEl    = null;
   let activeGroupId  = 'all';
-  let activeLvl      = null;   // null = no filter, 10-23 = filter by level
+  let activeLvl      = new Set();  // empty = no filter; set of numbers = multi-select
+  let lvlSectionOpen = true;
 
   function showStarsTab() {
     starsTabActive = true;
@@ -881,31 +882,31 @@
     lvlHeaderLabel.textContent = 'lvl';
     const lvlChevron = document.createElement('span');
     lvlChevron.id = 'stars-lvl-chevron';
-    lvlChevron.textContent = lvlSection._open ? '▾' : '▸';
+    lvlChevron.textContent = lvlSectionOpen ? '▾' : '▸';
     lvlHeader.appendChild(lvlHeaderLabel);
     lvlHeader.appendChild(lvlChevron);
 
     const lvlGrid = document.createElement('div');
     lvlGrid.id = 'stars-lvl-grid';
-    lvlGrid.style.display = lvlSection._open ? 'grid' : 'none';
+    lvlGrid.style.display = lvlSectionOpen ? 'grid' : 'none';
 
     for (let n = 10; n <= 23; n++) {
       const count = Object.keys(levels).filter(id => levels[id] === n).length;
       const btn = document.createElement('button');
-      btn.className = 'stars-lvl-btn' + (activeLvl === n ? ' active' : '');
+      btn.className = 'stars-lvl-btn' + (activeLvl.has(n) ? ' active' : '');
       btn.textContent = n;
-      btn.title = count + ' star' + (count !== 1 ? 's' : '');
+      btn.title = count + ' video' + (count !== 1 ? 's' : '');
       btn.addEventListener('click', () => {
-        activeLvl = activeLvl === n ? null : n;
+        if (activeLvl.has(n)) activeLvl.delete(n); else activeLvl.add(n);
         renderStarsView();
       });
       lvlGrid.appendChild(btn);
     }
 
     lvlHeader.addEventListener('click', () => {
-      const open = lvlGrid.style.display === 'none';
-      lvlGrid.style.display = open ? 'grid' : 'none';
-      lvlChevron.textContent = open ? '▾' : '▸';
+      lvlSectionOpen = lvlGrid.style.display === 'none';
+      lvlGrid.style.display = lvlSectionOpen ? 'grid' : 'none';
+      lvlChevron.textContent = lvlSectionOpen ? '▾' : '▸';
     });
 
     lvlSection.appendChild(lvlHeader);
@@ -918,7 +919,7 @@
 
     // ── All Stars ─────────────────────────────────────────────────────────────
     const allItem = makeSidebarItem('all', 'All Stars', Object.keys(stars).length);
-    allItem.addEventListener('click', () => { activeGroupId = 'all'; activeLvl = null; renderStarsView(); });
+    allItem.addEventListener('click', () => { activeGroupId = 'all'; activeLvl.clear(); renderStarsView(); });
     sidebar.appendChild(allItem);
 
     const divider = document.createElement('hr');
@@ -981,8 +982,8 @@
       ? Object.values(stars)
       : (groups.find(g => g.id === activeGroupId)?.videoIds || [])
           .filter(id => stars[id]).map(id => stars[id]);
-    const videosToShow = activeLvl != null
-      ? baseVideos.filter(s => levels[s.id] === activeLvl)
+    const videosToShow = activeLvl.size > 0
+      ? baseVideos.filter(s => activeLvl.has(levels[s.id]))
       : baseVideos;
 
     const mainHeader = document.createElement('div');
@@ -1127,35 +1128,12 @@
     slider.value = currentLvl != null ? currentLvl : 16;
     slider.id    = 'level-picker-slider';
     slider.addEventListener('input', () => {
-      label.textContent = slider.value;
-    });
-    picker.appendChild(slider);
-
-    const actions = document.createElement('div');
-    actions.id = 'level-picker-actions';
-
-    const setBtn = document.createElement('button');
-    setBtn.textContent = 'Set';
-    setBtn.className = 'level-picker-btn level-picker-set';
-    setBtn.addEventListener('click', () => {
       const lvl = Number(slider.value);
+      label.textContent = String(lvl);
       levels[videoId] = lvl; saveLevels();
       onUpdate(lvl);
-      picker.remove();
     });
-
-    const clearBtn = document.createElement('button');
-    clearBtn.textContent = 'Clear';
-    clearBtn.className = 'level-picker-btn level-picker-clear';
-    clearBtn.addEventListener('click', () => {
-      delete levels[videoId]; saveLevels();
-      onUpdate(null);
-      picker.remove();
-    });
-
-    actions.appendChild(setBtn);
-    actions.appendChild(clearBtn);
-    picker.appendChild(actions);
+    picker.appendChild(slider);
 
     const rect = anchorBtn.getBoundingClientRect();
     document.body.appendChild(picker);
@@ -2215,14 +2193,6 @@ render();
         appearance:slider-vertical; -webkit-appearance:slider-vertical;
         height:120px; width:28px; accent-color:#fe2c55; cursor:pointer;
       }
-      #level-picker-actions { display:flex; flex-direction:column; gap:6px; }
-      .level-picker-btn {
-        padding:6px 8px; border:none; border-radius:5px; font-size:12px;
-        cursor:pointer; font-weight:600; transition:opacity .15s;
-      }
-      .level-picker-set   { background:#fe2c55; color:#fff; }
-      .level-picker-clear { background:#333; color:#aaa; }
-      .level-picker-btn:hover { opacity:.85; }
 
       /* ── Overlay lvl button ── */
       .overlay-lvl-btn { font-size:11px; font-weight:700; letter-spacing:.5px; }
