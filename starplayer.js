@@ -1090,14 +1090,17 @@
     const mobileHdr = document.createElement('div');
     mobileHdr.id = 'stars-mobile-header';
 
-    // Title row
+    // Top row: title (left) + filter buttons (right) — all in one line
+    const mobileTopRow = document.createElement('div');
+    mobileHdr.appendChild(mobileTopRow);
+
     const mobileTitle = document.createElement('div');
     mobileTitle.id = 'stars-mobile-title';
-    mobileHdr.appendChild(mobileTitle);
+    mobileTopRow.appendChild(mobileTitle);
 
-    // Filter button row
     const mobileFilters = document.createElement('div');
     mobileFilters.id = 'stars-mobile-filters';
+    mobileTopRow.appendChild(mobileFilters);
 
     function makeFilterBtn(cls, html, title, isActive, onClick) {
       const btn = document.createElement('button');
@@ -1163,8 +1166,6 @@
     });
     lvlFilterBtn.addEventListener('pointercancel', () => { clearTimeout(_lvlTimer); _lvlTimer = null; });
     mobileFilters.appendChild(lvlFilterBtn);
-
-    mobileHdr.appendChild(mobileFilters);
 
     // Group pills strip (all non-system groups)
     const nonSystemGroups = groups.filter(g => g.name !== 'liked' && g.name !== 'disliked');
@@ -3318,53 +3319,65 @@ render();
         #stars-main-header { display: none !important; }
         #stars-grid { padding: 10px 12px; gap: 10px; }
 
-        /* ── Mobile stars header ── */
+        /* ── Mobile stars: floating overlay controls (no layout space consumed) ── */
+        #stars-main { position: relative; }
         #stars-mobile-header {
           display: flex; flex-direction: column; gap: 0;
-          padding: 12px 14px 0; flex-shrink: 0;
-          border-bottom: 1px solid #2a2a2a;
+          position: sticky; top: 0; z-index: 10;
+          padding: 10px 14px 32px; /* bottom padding = gradient tail */
+          background: linear-gradient(to bottom, rgba(13,13,13,0.97) 50%, transparent 100%);
+          pointer-events: none;
+          margin-bottom: -32px; /* pull grid up so gradient overlaps first row */
+          user-select: none;
         }
         #stars-mobile-title {
-          display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px;
+          display: flex; align-items: center; gap: 10px; flex: 1;
+          pointer-events: none;
         }
         #stars-mobile-title .stars-main-title {
           font-size: 20px; font-weight: 700; color: #fff;
         }
         #stars-mobile-title .stars-main-count {
-          font-size: 13px; color: #666;
+          font-size: 13px; color: #777;
+        }
+        /* Title + filters in one row */
+        #stars-mobile-header > :first-child {
+          display: flex; flex-direction: row; align-items: center; gap: 10px;
         }
         #stars-mobile-filters {
-          display: flex; gap: 8px; align-items: center; margin-bottom: 10px;
+          display: flex; gap: 6px; align-items: center;
+          pointer-events: auto; flex-shrink: 0;
         }
         .stars-filter-btn {
-          background: #222; border: 1px solid #3a3a3a; border-radius: 8px;
-          color: #888; cursor: pointer; padding: 6px 12px;
-          font-size: 14px; font-weight: 600; line-height: 1;
+          background: rgba(30,30,30,0.85); border: 1px solid rgba(80,80,80,0.6);
+          border-radius: 8px; color: #888; cursor: pointer; padding: 5px 10px;
+          font-size: 13px; font-weight: 600; line-height: 1;
           display: flex; align-items: center; justify-content: center;
           transition: color .15s, border-color .15s, background .15s;
-          min-width: 42px;
+          min-width: 38px; backdrop-filter: blur(4px);
         }
-        .stars-filter-btn.active { color: #fff; border-color: #fff; background: #333; }
+        .stars-filter-btn.active { color: #fff; border-color: rgba(255,255,255,0.6); background: rgba(60,60,60,0.9); }
         .stars-filter-btn.stars-filter-thumb-up.active  { color: #4caf50; border-color: #4caf50; }
         .stars-filter-btn.stars-filter-thumb-down.active { color: #f44336; border-color: #f44336; }
         #stars-mobile-groups {
-          display: flex; gap: 6px; overflow-x: auto; padding-bottom: 10px;
-          scrollbar-width: none;
+          display: flex; gap: 6px; overflow-x: auto; padding-top: 8px;
+          scrollbar-width: none; pointer-events: auto;
         }
         #stars-mobile-groups::-webkit-scrollbar { display: none; }
         .stars-mobile-group-pill {
-          background: #222; border: 1px solid #3a3a3a; border-radius: 20px;
-          color: #888; cursor: pointer; padding: 4px 12px;
+          background: rgba(30,30,30,0.85); border: 1px solid rgba(80,80,80,0.5);
+          border-radius: 20px; color: #888; cursor: pointer; padding: 4px 12px;
           font-size: 12px; white-space: nowrap; flex-shrink: 0;
+          backdrop-filter: blur(4px);
           transition: color .15s, border-color .15s, background .15s;
         }
-        .stars-mobile-group-pill.active { color: #fff; border-color: #555; background: #333; }
+        .stars-mobile-group-pill.active { color: #fff; border-color: rgba(255,255,255,0.5); background: rgba(60,60,60,0.9); }
         #stars-mobile-lvl-strip {
-          display: flex; gap: 6px; overflow-x: auto; padding-bottom: 10px;
-          scrollbar-width: none;
+          display: flex; gap: 6px; overflow-x: auto; padding-top: 8px;
+          scrollbar-width: none; pointer-events: auto;
         }
         #stars-mobile-lvl-strip::-webkit-scrollbar { display: none; }
-        .stars-filter-lvl-num { min-width: 36px; padding: 5px 8px; font-size: 13px; }
+        .stars-filter-lvl-num { min-width: 34px; padding: 4px 8px; font-size: 12px; }
 
         /* ── Hide star bubble on mobile ── */
         #star-toggle { display: none !important; }
@@ -3397,6 +3410,12 @@ render();
           padding: 0 !important; margin: 0 !important;
           border: none !important; background: transparent !important;
           overflow: hidden !important;
+        }
+
+        /* ── Prevent text selection during swipes ── */
+        #sp-mobile-nav, #sp-swipe-hint, #player-view, #stars-view,
+        .sp-nav-btn, #stars-mobile-header {
+          user-select: none; -webkit-user-select: none;
         }
 
         /* ── Hide original React nav entirely on mobile ── */
