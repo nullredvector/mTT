@@ -88,18 +88,18 @@
   }
 
   function getVideoInfo(videoId) {
+    const id = String(videoId);
     const E = window.E;
-    if (!E) return { desc: '', authorName: '' };
-
-    // Description lives in E.videoDescriptions keyed by videoId (directly, not via E.videos)
-    const desc = (E.videoDescriptions && E.videoDescriptions[videoId]) || '';
-
-    // Author: look up via E.videos[id].authorId → E.authors[authorId]
-    const v = E.videos && E.videos[videoId];
-    const a = v && E.authors && E.authors[v.authorId];
-    const authorName = (a && (a.uniqueIds?.[0] || a.nicknames?.[0])) || '';
-
-    return { desc, authorName };
+    if (E) {
+      // Description: E.videoDescriptions is keyed by videoId string
+      const desc = (E.videoDescriptions && (E.videoDescriptions[id] || E.videoDescriptions[videoId])) || '';
+      // Author: uniqueId (@handle) only, via videos → authors chain
+      const v    = E.videos && (E.videos[id] || E.videos[videoId]);
+      const a    = v && E.authors && E.authors[v.authorId];
+      const authorName = (a && a.uniqueIds?.[0]) || '';
+      if (desc || authorName) return { desc, authorName };
+    }
+    return { desc: '', authorName: '' };
   }
 
   function tabForCover(coverSrc) {
@@ -249,20 +249,21 @@
       }
     }
 
-    // Fallback: walk every leaf element in the row, collect all distinct text values
+    // Fallback: walk every leaf element in the full row, prefer texts that look like captions
     if (!desc) {
-      const allTexts = [];
+      // Patterns to reject: pure counts (1.2K), durations (0:45), short dates (Jan 5), pure numbers
+      const junkRe = /^[\d.,]+[KMBkm%]?$|^\d+:\d+$|^[A-Z][a-z]{2}\s+\d+$|^\d+$/;
+      const candidates = [];
       row.querySelectorAll('*').forEach(el => {
-        if (el.children.length > 0) return; // skip container nodes
+        if (el.children.length > 0) return;
         const t = el.textContent?.trim();
-        if (t && t.length > 1 && !allTexts.includes(t)) allTexts.push(t);
+        if (!t || t.length < 3) return;
+        if (t === authorName || t === '@' + authorName) return;
+        if (junkRe.test(t)) return;
+        candidates.push(t);
       });
-      // Pick the first text that doesn't look like the author name
-      for (const t of allTexts) {
-        if (t === authorName || t === '@' + authorName) continue;
-        desc = t;
-        break;
-      }
+      // Prefer entries that contain spaces (likely real captions vs single-word ui labels)
+      desc = candidates.find(t => t.includes(' ')) || candidates[0] || '';
     }
 
     return { authorName, desc };
@@ -407,20 +408,29 @@
   // OPEN VIDEO (from panel or Stars tab)
   // ═══════════════════════════════════════════════════════════════════════════
 
+  function starItemToCtx(s) {
+    const info = getVideoInfo(s.id);
+    return {
+      id: s.id,
+      coverSrc: s.coverSrc,
+      videoPath: getVideoPath(s.coverSrc),
+      authorName: info.authorName || s.authorName || '',
+      desc:       info.desc       || s.desc       || '',
+    };
+  }
+
   function openVideo(coverSrc) {
     closePanel();
     const videoId = getVideoIdFromSrc(coverSrc);
     if (!videoId) return;
     const s0 = stars[videoId];
-    const contextList = [{ id: videoId, coverSrc, videoPath: getVideoPath(coverSrc),
-      authorName: s0?.authorName || '', desc: s0?.desc || '' }];
-    // Try to build a richer context from Stars if we're in Stars view
+    const contextList = [starItemToCtx(s0 || { id: videoId, coverSrc })];
+    // Build full stars context when in Stars view
     if (starsTabActive) {
       const starList = Object.values(stars);
       if (starList.length > 0) {
         contextList.length = 0;
-        starList.forEach(s => contextList.push({ id: s.id, coverSrc: s.coverSrc,
-          videoPath: getVideoPath(s.coverSrc), authorName: s.authorName || '', desc: s.desc || '' }));
+        starList.forEach(s => contextList.push(starItemToCtx(s)));
       }
     }
     const idx = contextList.findIndex(v => v.id === videoId);
@@ -1145,24 +1155,21 @@
 
   async function openPlayer() {
     if (starsTabActive) showMainContent();
-    playerOpen = true;
-
-    document.querySelector('nav .player-tab')?.classList.add('active');
 
     if (isMobilePlayer()) {
       // Mobile: show loading screen, build list, then scroll-snap feed
+      playerOpen = true;
+      document.querySelector('nav .player-tab')?.classList.add('active');
       showMobilePlayerLoading();
       playerVideoList = await buildVideoList();
       if (!playerOpen) { hideMobilePlayerView(); return; }
       playerColumnOffsets = [0];
       renderMobilePlayerContent();
     } else {
-      // Desktop: build list then open first video in overlay
+      // Desktop: build list and open a new pop-out window each time
       playerVideoList = await buildVideoList();
-      if (!playerOpen) return;
-      playerColumnOffsets = Array.from({ length: numCols() }, (_, i) => i);
       if (playerVideoList.length > 0) {
-        openVideoOverlay(0, playerVideoList);
+        popoutPlayer(playerVideoList, 0);
       }
     }
   }
@@ -1667,15 +1674,16 @@
   // PLAYER — POP-OUT WINDOW
   // ═══════════════════════════════════════════════════════════════════════════
 
-  function popoutPlayer() {
+  function popoutPlayer(startList, startIdx) {
     const win = window.open(
-      'about:blank', 'myfavett-player',
+      'about:blank', '',   // empty name = new window every time
       'width=360,height=640,resizable=yes,menubar=no,toolbar=no,location=no,status=no'
     );
     if (!win) { alert('Pop-out was blocked. Please allow pop-ups for this file and try again.'); return; }
 
     const safeJson = obj => JSON.stringify(obj).replace(/<\/script>/gi, '<\\/script>');
-    const playerOffset = playerColumnOffsets[0] || 0;
+    const vidList    = startList  || playerVideoList;
+    const vidOffset  = startIdx   != null ? startIdx : (playerColumnOffsets[0] || 0);
 
     win.document.write(`<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
@@ -1693,24 +1701,29 @@ body:hover .ctl{opacity:1}
 .b{background:rgba(0,0,0,.5);border:none;border-radius:50%;color:#ddd;width:40px;height:40px;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s;pointer-events:auto}
 .b:hover{background:rgba(0,0,0,.8)}
 .b.on{color:gold}
-.au{position:absolute;bottom:12px;left:12px;font-size:12px;font-weight:500;text-shadow:0 1px 4px rgba(0,0,0,.9);pointer-events:none;max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.cap{position:absolute;bottom:28px;left:12px;font-size:11px;color:rgba(255,255,255,.8);text-shadow:0 1px 3px rgba(0,0,0,.8);pointer-events:none;max-width:65%;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.scrim{position:absolute;bottom:0;left:0;right:0;height:140px;background:linear-gradient(transparent,rgba(0,0,0,.7));pointer-events:none}
+.meta{position:absolute;bottom:12px;left:12px;max-width:65%;pointer-events:none}
+.au{font-size:13px;font-weight:600;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.9);margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cap{font-size:11px;color:rgba(255,255,255,.85);text-shadow:0 1px 3px rgba(0,0,0,.8);line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .mu{position:absolute;bottom:10px;right:10px;pointer-events:auto}
 .ct{position:absolute;top:10px;left:50%;transform:translateX(-50%);font-size:11px;color:rgba(255,255,255,.35);pointer-events:none}
 </style></head><body>
 <video id="v" muted autoplay playsinline></video>
 <div class="ctl" id="c">
+  <div class="scrim"></div>
   <button class="close" id="x">✕</button>
   <div class="rc" id="rc"></div>
-  <div class="au" id="au"></div>
-  <div class="cap" id="cp"></div>
+  <div class="meta">
+    <div class="au" id="au"></div>
+    <div class="cap" id="cp"></div>
+  </div>
   <div class="ct" id="ct"></div>
   <button class="b mu" id="mb"></button>
 </div>
 <script>
 const SK='myfavett_stars_v1',GK='myfavett_groups_v1';
-let vids=${safeJson(playerVideoList)};
-let idx=${playerOffset};
+let vids=${safeJson(vidList)};
+let idx=${vidOffset};
 let muted=true;
 
 function ls(){try{return JSON.parse(localStorage.getItem(SK)||'{}')}catch(_){return{}}}
@@ -1742,7 +1755,7 @@ function render(){
   rc.appendChild(sb);
 
   document.getElementById('au').textContent=item.authorName?'@'+item.authorName:'';
-  document.getElementById('cp').textContent='';
+  document.getElementById('cp').textContent=item.desc||'';
   document.getElementById('ct').textContent=vids.length>1?(idx+1)+' / '+vids.length:'';
   document.getElementById('mb').innerHTML=mi(muted);
 }
@@ -1808,7 +1821,13 @@ render();
         const tab = makeNavTab('player-tab',
           '<path d="M8 5v14l11-7z"/>',
           'Player',
-          () => { if (!playerOpen) openPlayer(); else closePlayer(); }
+          () => {
+            if (isMobilePlayer()) {
+              if (!playerOpen) openPlayer(); else closePlayer();
+            } else {
+              openPlayer(); // always launches a new pop-out on desktop
+            }
+          }
         );
         if (playerOpen) tab.classList.add('active');
         starsTab.insertAdjacentElement('afterend', tab);
@@ -1823,7 +1842,7 @@ render();
       const tab = e.target.closest('.pressable');
       if (!tab || playerBuilding) return; // ignore clicks while collecting video IDs
       if (!tab.classList.contains('stars-tab') && starsTabActive) showMainContent();
-      if (!tab.classList.contains('player-tab') && playerOpen)    closePlayer();
+      if (!tab.classList.contains('player-tab') && playerOpen && isMobilePlayer()) closePlayer();
     });
   }
 
