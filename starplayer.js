@@ -887,13 +887,16 @@
 
   function showStarsTab() {
     starsTabActive = true;
-    closePlayer();
+    if (!isMobilePlayer()) closePlayer();
     document.querySelector('main')?.style.setProperty('display', 'none');
     toggleBtn.style.display = 'none';
     closePanel();
 
-    document.querySelectorAll('nav .active').forEach(el => el.classList.remove('active'));
-    document.querySelector('nav .stars-tab')?.classList.add('active');
+    if (isMobilePlayer()) { activeMobileTab = 'stars'; updateMobileNavActive(); }
+    else {
+      document.querySelectorAll('nav .active').forEach(el => el.classList.remove('active'));
+      document.querySelector('nav .stars-tab')?.classList.add('active');
+    }
 
     const main = document.querySelector('main');
     if (!starsViewEl) {
@@ -910,7 +913,7 @@
     document.querySelector('main')?.style.removeProperty('display');
     toggleBtn.style.display = '';
     if (starsViewEl) starsViewEl.style.display = 'none';
-    document.querySelector('nav .stars-tab')?.classList.remove('active');
+    if (!isMobilePlayer()) document.querySelector('nav .stars-tab')?.classList.remove('active');
   }
 
   function renderStarsView() {
@@ -1470,6 +1473,76 @@
   let playerBuilding       = false;
   let playerViewEl         = null;  // mobile tab-view element (like starsViewEl)
 
+  // ── Mobile tab state ───────────────────────────────────────────────────────
+  const MOBILE_TABS = ['home', 'stars', 'recents', 'favs'];
+  let activeMobileTab = 'home';
+
+  function updateMobileNavActive() {
+    document.querySelectorAll('#sp-mobile-nav .sp-nav-btn').forEach(btn => {
+      btn.classList.toggle('sp-active', btn.dataset.tab === activeMobileTab);
+    });
+  }
+
+  function setMobileTab(tab) {
+    activeMobileTab = tab;
+    updateMobileNavActive();
+    if (tab === 'home') {
+      showMainContent();
+      if (!playerOpen) {
+        openPlayer();
+      } else {
+        if (playerViewEl) playerViewEl.style.display = '';
+      }
+    } else if (tab === 'stars') {
+      if (playerOpen) closePlayer();
+      showStarsTab();
+    } else {
+      if (playerOpen) closePlayer();
+      showMainContent();
+      const cls = tab === 'recents' ? '.likes' : '.bookmarked';
+      document.querySelector(`nav div${cls}`)?.click();
+    }
+  }
+
+  function createMobileNav() {
+    if (document.getElementById('sp-mobile-nav')) return;
+    const nav = document.createElement('div');
+    nav.id = 'sp-mobile-nav';
+    const tabs = [
+      { id: 'home',    label: 'Home',    svg: '<path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/>' },
+      { id: 'stars',   label: 'Stars',   svg: '<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>' },
+      { id: 'recents', label: 'Recents', svg: '<path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zm4.24 16L11 13.5V7h1.5v5.87l4.75 2.82-1.01 1.74z"/>' },
+      { id: 'favs',    label: 'Favs',    svg: '<path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>' },
+    ];
+    tabs.forEach(({ id, label, svg }) => {
+      const btn = document.createElement('button');
+      btn.className = 'sp-nav-btn' + (id === activeMobileTab ? ' sp-active' : '');
+      btn.dataset.tab = id;
+      btn.innerHTML = `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">${svg}</svg><span>${label}</span>`;
+      btn.addEventListener('click', () => setMobileTab(id));
+      nav.appendChild(btn);
+    });
+    document.body.appendChild(nav);
+  }
+
+  function setupMobileSwipe() {
+    let _tsx = 0, _tsy = 0;
+    document.addEventListener('touchstart', e => {
+      _tsx = e.touches[0].clientX;
+      _tsy = e.touches[0].clientY;
+    }, { passive: true });
+    document.addEventListener('touchend', e => {
+      // Skip if player is open — player handles its own swipes
+      if (activeMobileTab === 'home') return;
+      const dx = e.changedTouches[0].clientX - _tsx;
+      const dy = e.changedTouches[0].clientY - _tsy;
+      if (Math.abs(dx) < 60 || Math.abs(dx) <= Math.abs(dy)) return;
+      const idx = MOBILE_TABS.indexOf(activeMobileTab);
+      if (dx < 0 && idx < MOBILE_TABS.length - 1) setMobileTab(MOBILE_TABS[idx + 1]);
+      else if (dx > 0 && idx > 0) setMobileTab(MOBILE_TABS[idx - 1]);
+    }, { passive: true });
+  }
+
   function numCols() { return window.innerWidth < 768 ? 1 : 3; }
 
   // Walk React's fiber tree from a root element to find the react-window
@@ -1613,7 +1686,7 @@
     if (isMobilePlayer()) {
       // Mobile: show loading screen, build list, then scroll-snap feed
       playerOpen = true;
-      document.querySelector('nav .player-tab')?.classList.add('active');
+      activeMobileTab = 'home'; updateMobileNavActive();
       showMobilePlayerLoading();
       playerVideoList = await buildVideoList();
       if (!playerOpen) { hideMobilePlayerView(); return; }
@@ -1633,7 +1706,7 @@
     closeVideoOverlay();
     document.getElementById('player-overlay')?.remove();
     hideMobilePlayerView();
-    document.querySelector('nav .player-tab')?.classList.remove('active');
+    if (!isMobilePlayer()) document.querySelector('nav .player-tab')?.classList.remove('active');
   }
 
   // Show #player-view immediately as a fixed loading screen.
@@ -1900,10 +1973,20 @@
       video.addEventListener('playing', () => { video.poster = ''; }, { once: true });
       video.addEventListener('ended',   () => { video.currentTime = 0; video.play().catch(() => {}); });
       video.addEventListener('contextmenu', e => { e.preventDefault(); video.paused ? video.play().catch(() => {}) : video.pause(); });
-      let _tsy = 0;
-      slide.addEventListener('touchstart', e => { _tsy = e.touches[0].clientY; }, { passive: true });
+      let _tsx = 0, _tsy = 0;
+      slide.addEventListener('touchstart', e => { _tsx = e.touches[0].clientX; _tsy = e.touches[0].clientY; }, { passive: true });
       slide.addEventListener('touchend', e => {
-        if (Math.abs(_tsy - e.changedTouches[0].clientY) < 20) {
+        const dx = e.changedTouches[0].clientX - _tsx;
+        const dy = e.changedTouches[0].clientY - _tsy;
+        // Horizontal swipe → switch tab
+        if (Math.abs(dx) >= 60 && Math.abs(dx) > Math.abs(dy)) {
+          const idx = MOBILE_TABS.indexOf(activeMobileTab);
+          if (dx < 0 && idx < MOBILE_TABS.length - 1) setMobileTab(MOBILE_TABS[idx + 1]);
+          else if (dx > 0 && idx > 0) setMobileTab(MOBILE_TABS[idx - 1]);
+          return;
+        }
+        // Tap → toggle play/pause
+        if (Math.abs(dx) < 20 && Math.abs(dy) < 20) {
           video.paused ? video.play().catch(() => {}) : video.pause();
         }
       }, { passive: true });
@@ -2491,12 +2574,17 @@ render();
     });
     scanCards();
 
-    const nav = document.querySelector('nav');
-    if (nav) {
-      new MutationObserver(injectNavTabs).observe(nav, { childList: true });
+    if (isMobilePlayer()) {
+      createMobileNav();
+      setupMobileSwipe();
+      // Auto-open Home on page load
+      setTimeout(() => setMobileTab('home'), 600);
+    } else {
+      const nav = document.querySelector('nav');
+      if (nav) new MutationObserver(injectNavTabs).observe(nav, { childList: true });
+      injectNavTabs();
+      watchNavClicks();
     }
-
-    watchNavClicks();
   }
 
   // ── Expose live API for pop-out windows ──────────────────────────────────
@@ -2950,46 +3038,25 @@ render();
           overflow: hidden !important;
         }
 
-        /* ── Hide Explain nav tab on mobile ── */
-        nav > div.explain-tab { display: none !important; }
+        /* ── Hide original React nav entirely on mobile ── */
+        nav { display: none !important; }
 
-        /* ── Bottom tab bar ── */
-        nav {
-          position: fixed !important;
-          bottom: 0 !important; top: auto !important;
-          left: 0 !important; right: 0 !important;
-          /* 100vw escapes any width-constrained parent container */
-          width: 100vw !important; height: 62px !important;
-          flex-direction: row !important; align-items: stretch !important;
-          border-top: 1px solid #2a2a2a !important; border-bottom: none !important;
-          overflow-x: auto !important; overflow-y: hidden !important;
-          z-index: 500 !important; padding: 0 !important;
-          background: #1a1a1a !important;
-          /* Reset any margin/transform that could shift it right */
-          margin: 0 !important; transform: none !important;
+        /* ── Custom bottom nav bar ── */
+        #sp-mobile-nav {
+          position: fixed; bottom: 0; left: 0; right: 0; z-index: 600;
+          background: #1a1a1a; border-top: 1px solid #2a2a2a;
+          display: flex; height: 62px; align-items: stretch;
         }
-        /* Each tab: icon centred above label */
-        nav > div {
-          flex: 1 1 0 !important; min-width: 54px !important;
-          flex-direction: column !important; align-items: center !important;
-          justify-content: center !important; gap: 2px !important;
-          padding: 5px 4px 3px !important;
-          font-size: 10px !important; line-height: 1.2 !important;
-          border-bottom: none !important; border-top: 3px solid transparent !important;
+        .sp-nav-btn {
+          flex: 1; display: flex; flex-direction: column; align-items: center;
+          justify-content: center; gap: 3px; background: none; border: none;
+          color: #555; font-size: 10px; cursor: pointer;
+          border-top: 3px solid transparent; transition: color .15s;
+          padding: 5px 4px 3px;
         }
-        nav > div.active {
-          border-bottom: none !important;
-          border-top: 3px solid var(--active, currentColor) !important;
-        }
-        nav > div svg { width: 22px !important; height: 22px !important; }
-        /* Flip injected-tab active indicator from bottom → top */
-        nav .stars-tab, nav .player-tab {
-          border-bottom: none !important; border-top: 3px solid transparent !important;
-        }
-        nav .stars-tab.active, nav .player-tab.active {
-          border-bottom: none !important;
-          border-top: 3px solid var(--active, #d7d7d7) !important;
-        }
+        .sp-nav-btn.sp-active { color: #fff; border-top-color: #fff; }
+        .sp-nav-btn svg { flex-shrink: 0; }
+
         /* Push all page content above the fixed bottom nav */
         body { padding-bottom: 62px !important; }
         /* Stars view must not slip behind nav */
