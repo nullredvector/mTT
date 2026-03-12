@@ -113,13 +113,13 @@
   // TOGGLE STAR
   // ═══════════════════════════════════════════════════════════════════════════
 
-  function toggleStar(videoId, coverSrc) {
+  function toggleStar(videoId, coverSrc, authorName, desc) {
     if (stars[videoId]) {
       delete stars[videoId];
       groups.forEach(g => { g.videoIds = g.videoIds.filter(id => id !== videoId); });
       saveGroups();
     } else {
-      stars[videoId] = { id: videoId, coverSrc };
+      stars[videoId] = { id: videoId, coverSrc, authorName: authorName || '', desc: desc || '' };
     }
     saveStars();
     refreshAllButtons();
@@ -193,6 +193,13 @@
       const src = img && img.getAttribute('src');
       const videoId = getVideoIdFromSrc(src);
       if (!videoId || !src) return;
+
+      // Debug: log the row DOM so we can see what's available
+      const row = coverDiv.parentElement;
+      console.log('[starplayer click] coverDiv.parentElement HTML:', row?.innerHTML?.slice(0, 800));
+      const meta = scrapeRowMeta(coverDiv);
+      console.log('[starplayer click] scraped meta:', JSON.stringify(meta));
+
       // Build context list from currently visible thumbnails
       const contextList = buildContextFromDOM();
       const idx = contextList.findIndex(v => v.id === videoId);
@@ -230,13 +237,29 @@
       }
     }
 
-    // Caption: any text element whose content differs from the author name
+    // Caption: try class-based selectors first, then fall back to all leaf text nodes
     const descSelectors = ['[class*="desc"]', '[class*="caption"]', '[class*="content"]',
       '[class*="title"]', '.searchable', '.underline'];
     for (const sel of descSelectors) {
       const el = scope.querySelector(sel);
       const t = el?.textContent?.trim();
       if (t && t !== authorName && t !== '@' + authorName && t.length > 2) {
+        desc = t;
+        break;
+      }
+    }
+
+    // Fallback: walk every leaf element in the row, collect all distinct text values
+    if (!desc) {
+      const allTexts = [];
+      row.querySelectorAll('*').forEach(el => {
+        if (el.children.length > 0) return; // skip container nodes
+        const t = el.textContent?.trim();
+        if (t && t.length > 1 && !allTexts.includes(t)) allTexts.push(t);
+      });
+      // Pick the first text that doesn't look like the author name
+      for (const t of allTexts) {
+        if (t === authorName || t === '@' + authorName) continue;
         desc = t;
         break;
       }
@@ -388,13 +411,16 @@
     closePanel();
     const videoId = getVideoIdFromSrc(coverSrc);
     if (!videoId) return;
-    const contextList = [{ id: videoId, coverSrc, videoPath: getVideoPath(coverSrc) }];
+    const s0 = stars[videoId];
+    const contextList = [{ id: videoId, coverSrc, videoPath: getVideoPath(coverSrc),
+      authorName: s0?.authorName || '', desc: s0?.desc || '' }];
     // Try to build a richer context from Stars if we're in Stars view
     if (starsTabActive) {
       const starList = Object.values(stars);
       if (starList.length > 0) {
         contextList.length = 0;
-        starList.forEach(s => contextList.push({ id: s.id, coverSrc: s.coverSrc, videoPath: getVideoPath(s.coverSrc) }));
+        starList.forEach(s => contextList.push({ id: s.id, coverSrc: s.coverSrc,
+          videoPath: getVideoPath(s.coverSrc), authorName: s.authorName || '', desc: s.desc || '' }));
       }
     }
     const idx = contextList.findIndex(v => v.id === videoId);
@@ -522,7 +548,7 @@
     starBtn.innerHTML = '★';
     starBtn.addEventListener('click', e => {
       e.stopPropagation();
-      toggleStar(item.id, item.coverSrc);
+      toggleStar(item.id, item.coverSrc, authorName, desc);
       starBtn.classList.toggle('active', Boolean(stars[item.id]));
     });
     rightCenter.appendChild(starBtn);
