@@ -113,6 +113,23 @@
     return Date.now().toString(36) + Math.random().toString(36).slice(2);
   }
 
+  // Toggle a video in/out of a named group (creates the group if it doesn't exist).
+  // Returns true if the video is now IN the group.
+  function toggleQuickGroup(videoId, groupName) {
+    let g = groups.find(x => x.name === groupName);
+    if (!g) { g = { id: uid(), name: groupName, videoIds: [] }; groups.push(g); }
+    const idx = g.videoIds.indexOf(videoId);
+    if (idx === -1) { g.videoIds.push(videoId); } else { g.videoIds.splice(idx, 1); }
+    saveGroups();
+    if (starsTabActive) renderStarsView();
+    return g.videoIds.includes(videoId);
+  }
+
+  function inQuickGroup(videoId, groupName) {
+    const g = groups.find(x => x.name === groupName);
+    return g ? g.videoIds.includes(videoId) : false;
+  }
+
   function getVideoIdFromSrc(src) {
     const m = src && src.match(/covers\/(\d+)\.jpg/);
     return m ? m[1] : null;
@@ -548,6 +565,9 @@
   function openVideoOverlay(startIdx, contextList) {
     // On mobile route to the scroll-snap feed instead of the small overlay
     if (isMobilePlayer()) {
+      playerReturnTab = activeMobileTab === 'stars' ? 'stars'
+                     : activeMobileTab === 'recents' ? 'recents'
+                     : null;
       playerOpen = true;
       playerVideoList = contextList;
       playerColumnOffsets = [startIdx];
@@ -878,22 +898,27 @@
 
   let starsTabActive = false;
   let starsViewEl    = null;
-  let activeView     = null;        // null | '__lvl_groups__' | '__ungrouped__'
-  let activeGroupIds = new Set();   // empty = all stars; non-empty = union of selected groups
-  let activeLvl      = new Set();   // empty = no filter; set of numbers = multi-select
-  let lvlSectionOpen = true;
-  let groupSortOrder = 'alpha';     // 'alpha' | 'count'
+  let activeView       = null;        // null | '__lvl_groups__' | '__ungrouped__'
+  let activeGroupIds   = new Set();   // empty = all stars; non-empty = union of selected groups
+  let activeLvl        = new Set();   // empty = no filter; set of numbers = multi-select
+  let lvlSectionOpen   = true;
+  let mobileStarsLvlOpen = false;     // mobile: whether inline lvl strip is visible
+  let mobileStarsGroupsOpen = false;  // mobile: whether group picker panel is expanded
+  let groupSortOrder   = 'alpha';     // 'alpha' | 'count'
   let starsContextList = [];        // mirrors the currently rendered video grid order
 
   function showStarsTab() {
     starsTabActive = true;
-    closePlayer();
+    if (!isMobilePlayer()) closePlayer();
     document.querySelector('main')?.style.setProperty('display', 'none');
     toggleBtn.style.display = 'none';
     closePanel();
 
-    document.querySelectorAll('nav .active').forEach(el => el.classList.remove('active'));
-    document.querySelector('nav .stars-tab')?.classList.add('active');
+    if (isMobilePlayer()) { activeMobileTab = 'stars'; updateMobileNavActive(); }
+    else {
+      document.querySelectorAll('nav .active').forEach(el => el.classList.remove('active'));
+      document.querySelector('nav .stars-tab')?.classList.add('active');
+    }
 
     const main = document.querySelector('main');
     if (!starsViewEl) {
@@ -910,7 +935,7 @@
     document.querySelector('main')?.style.removeProperty('display');
     toggleBtn.style.display = '';
     if (starsViewEl) starsViewEl.style.display = 'none';
-    document.querySelector('nav .stars-tab')?.classList.remove('active');
+    if (!isMobilePlayer()) document.querySelector('nav .stars-tab')?.classList.remove('active');
   }
 
   function renderStarsView() {
@@ -1064,6 +1089,149 @@
     mainHeader.id = 'stars-main-header';
     mainArea.appendChild(mainHeader);
 
+    // ── Mobile compact header (replaces sidebar on small screens) ─────────────
+    const mobileHdr = document.createElement('div');
+    mobileHdr.id = 'stars-mobile-header';
+
+    // Top row: title (left) + filter buttons (right) — all in one line
+    const mobileTopRow = document.createElement('div');
+    mobileHdr.appendChild(mobileTopRow);
+
+    const mobileTitle = document.createElement('div');
+    mobileTitle.id = 'stars-mobile-title';
+    mobileTopRow.appendChild(mobileTitle);
+
+    const mobileFilters = document.createElement('div');
+    mobileFilters.id = 'stars-mobile-filters';
+    mobileTopRow.appendChild(mobileFilters);
+
+    function makeFilterBtn(cls, html, title, isActive, onClick) {
+      const btn = document.createElement('button');
+      btn.className = 'stars-filter-btn ' + cls + (isActive ? ' active' : '');
+      btn.innerHTML = html;
+      btn.title = title;
+      btn.addEventListener('click', e => { e.stopPropagation(); onClick(); });
+      return btn;
+    }
+
+    // ★ All Stars
+    const isAll = activeView === null && activeGroupIds.size === 0 && activeLvl.size === 0 && !mobileStarsLvlOpen;
+    mobileFilters.appendChild(makeFilterBtn('stars-filter-all', '★', 'All Stars', isAll, () => {
+      activeView = null; activeGroupIds.clear(); activeLvl.clear(); mobileStarsLvlOpen = false; mobileStarsGroupsOpen = false; renderStarsView();
+    }));
+
+    // 👍 Liked group
+    const likedG   = groups.find(g => g.name === 'liked');
+    const likedActive = likedG ? activeGroupIds.has(likedG.id) : false;
+    const thumbUpSvg  = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z"/></svg>';
+    mobileFilters.appendChild(makeFilterBtn('stars-filter-thumb-up', thumbUpSvg, 'Liked', likedActive, () => {
+      const g = groups.find(x => x.name === 'liked');
+      if (!g) return;
+      activeView = null; activeLvl.clear(); mobileStarsLvlOpen = false;
+      if (activeGroupIds.has(g.id)) activeGroupIds.delete(g.id); else { activeGroupIds.clear(); activeGroupIds.add(g.id); }
+      renderStarsView();
+    }));
+
+    // 👎 Disliked group
+    const dislikedG   = groups.find(g => g.name === 'disliked');
+    const dislikedActive = dislikedG ? activeGroupIds.has(dislikedG.id) : false;
+    const thumbDownSvg   = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M15 3H6c-.83 0-1.54.5-1.84 1.22l-3.02 7.05c-.09.23-.14.47-.14.73v2c0 1.1.9 2 2 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L9.83 23l6.59-6.59c.36-.36.58-.86.58-1.41V5c0-1.1-.9-2-2-2zm4 0v12h4V3h-4z"/></svg>';
+    mobileFilters.appendChild(makeFilterBtn('stars-filter-thumb-down', thumbDownSvg, 'Disliked', dislikedActive, () => {
+      const g = groups.find(x => x.name === 'disliked');
+      if (!g) return;
+      activeView = null; activeLvl.clear(); mobileStarsLvlOpen = false;
+      if (activeGroupIds.has(g.id)) activeGroupIds.delete(g.id); else { activeGroupIds.clear(); activeGroupIds.add(g.id); }
+      renderStarsView();
+    }));
+
+    // lvl filter button — tap: toggle inline lvl number strip / long-press: lvl groups view
+    const lvlBtnActive = activeLvl.size > 0 || mobileStarsLvlOpen || activeView === '__lvl_groups__';
+    const lvlFilterBtn = makeFilterBtn('stars-filter-lvl', 'lvl', 'Level filter (hold for groups)', lvlBtnActive, () => {});
+    let _lvlTimer = null;
+    lvlFilterBtn.addEventListener('pointerdown', () => {
+      _lvlTimer = setTimeout(() => {
+        _lvlTimer = null;
+        mobileStarsLvlOpen = false;
+        activeView = '__lvl_groups__'; activeGroupIds.clear(); activeLvl.clear(); renderStarsView();
+      }, 500);
+    });
+    lvlFilterBtn.addEventListener('pointerup', () => {
+      if (_lvlTimer) {
+        clearTimeout(_lvlTimer); _lvlTimer = null;
+        if (mobileStarsLvlOpen || activeLvl.size > 0) {
+          mobileStarsLvlOpen = false; activeLvl.clear();
+        } else {
+          mobileStarsLvlOpen = true;
+        }
+        if (activeView === '__lvl_groups__') { activeView = null; activeGroupIds.clear(); }
+        renderStarsView();
+      }
+    });
+    lvlFilterBtn.addEventListener('pointercancel', () => { clearTimeout(_lvlTimer); _lvlTimer = null; });
+    mobileFilters.appendChild(lvlFilterBtn);
+
+    // "grp" toggle button — opens/closes the group picker panel
+    const nonSystemGroups = groups.filter(g => g.name !== 'liked' && g.name !== 'disliked');
+    if (nonSystemGroups.length) {
+      const grpActiveCount = [...activeGroupIds].filter(id => nonSystemGroups.some(g => g.id === id)).length;
+      const grpLabel = grpActiveCount > 0 ? `grp ${grpActiveCount}` : 'grp';
+      const grpBtnActive = grpActiveCount > 0 || mobileStarsGroupsOpen;
+      const grpBtn = makeFilterBtn('stars-filter-grp', grpLabel, 'Groups', grpBtnActive, () => {
+        mobileStarsGroupsOpen = !mobileStarsGroupsOpen;
+        renderStarsView();
+      });
+      mobileFilters.appendChild(grpBtn);
+
+      // Expandable group picker panel (shown when open)
+      if (mobileStarsGroupsOpen) {
+        const groupWrap = document.createElement('div');
+        groupWrap.id = 'stars-mobile-groups-wrap';
+        const groupPanel = document.createElement('div');
+        groupPanel.id = 'stars-mobile-groups';
+        const sortedNS = [...nonSystemGroups].sort((a, b) => {
+          if (groupSortOrder === 'count') return b.videoIds.length - a.videoIds.length;
+          return a.name.localeCompare(b.name);
+        });
+        sortedNS.forEach(g => {
+          const pill = document.createElement('button');
+          pill.className = 'stars-mobile-group-pill' + (activeGroupIds.has(g.id) ? ' active' : '');
+          pill.textContent = g.name + (g.videoIds.length ? ` ${g.videoIds.length}` : '');
+          pill.addEventListener('click', () => {
+            activeView = null; activeLvl.clear();
+            if (activeGroupIds.has(g.id)) activeGroupIds.delete(g.id); else activeGroupIds.add(g.id);
+            renderStarsView();
+          });
+          groupPanel.appendChild(pill);
+        });
+        groupWrap.appendChild(groupPanel);
+        mobileHdr.appendChild(groupWrap);
+      }
+    }
+
+    // Lvl number strip (visible when strip open or a lvl is already selected)
+    if (mobileStarsLvlOpen || activeLvl.size > 0) {
+      const lvlStrip = document.createElement('div');
+      lvlStrip.id = 'stars-mobile-lvl-strip';
+      for (let n = 10; n <= 23; n++) {
+        const count = Object.keys(levels).filter(id => levels[id] === n).length;
+        if (!count) continue;
+        const btn = document.createElement('button');
+        btn.className = 'stars-filter-btn stars-filter-lvl-num' + (activeLvl.has(n) ? ' active' : '');
+        btn.textContent = n;
+        btn.title = count + ' video' + (count !== 1 ? 's' : '');
+        btn.addEventListener('click', e => {
+          e.stopPropagation();
+          activeView = null;
+          if (activeLvl.has(n)) activeLvl.delete(n); else activeLvl.add(n);
+          renderStarsView();
+        });
+        lvlStrip.appendChild(btn);
+      }
+      mobileHdr.appendChild(lvlStrip);
+    }
+
+    mainArea.insertBefore(mobileHdr, mainHeader);
+
     const grid = document.createElement('div');
     grid.id = 'stars-grid';
 
@@ -1073,6 +1241,8 @@
       mainHeader.innerHTML =
         `<span class="stars-main-title">lvl</span>` +
         `<span class="stars-main-count">${occupiedLvls.length} group${occupiedLvls.length !== 1 ? 's' : ''}</span>`;
+      mobileTitle.innerHTML =
+        `<span class="stars-main-title">lvl</span><span class="stars-main-count">${occupiedLvls.length} group${occupiedLvls.length !== 1 ? 's' : ''}</span>`;
 
       if (!occupiedLvls.length) {
         const empty = document.createElement('div');
@@ -1126,6 +1296,8 @@
       mainHeader.innerHTML =
         `<span class="stars-main-title">Ungrouped</span>` +
         `<span class="stars-main-count">${videosToShow.length} video${videosToShow.length !== 1 ? 's' : ''}</span>`;
+      mobileTitle.innerHTML =
+        `<span class="stars-main-title">Ungrouped</span><span class="stars-main-count">${videosToShow.length} video${videosToShow.length !== 1 ? 's' : ''}</span>`;
 
       starsContextList = videosToShow.map(s => starItemToCtx(s.lvlOnly ? s : (stars[s.id] || s)));
       if (!videosToShow.length) {
@@ -1189,6 +1361,8 @@
       mainHeader.innerHTML =
         `<span class="stars-main-title">${titleText}</span>` +
         `<span class="stars-main-count">${videosToShow.length} video${videosToShow.length !== 1 ? 's' : ''}</span>`;
+      mobileTitle.innerHTML =
+        `<span class="stars-main-title">${titleText}</span><span class="stars-main-count">${videosToShow.length} video${videosToShow.length !== 1 ? 's' : ''}</span>`;
 
       starsContextList = videosToShow.map(s => starItemToCtx(s.lvlOnly ? s : (stars[s.id] || s)));
       if (!videosToShow.length) {
@@ -1469,6 +1643,177 @@
   let playerColumnOffsets  = [];   // one index per column, independently navigable
   let playerBuilding       = false;
   let playerViewEl         = null;  // mobile tab-view element (like starsViewEl)
+  let playerReturnTab      = null;  // tab to return to when player is closed via X button
+  let playerStartId        = null;  // if set, player will start at this video ID
+  let recentsGridEl        = null;  // custom recents grid element
+  let recentsGridBuilt     = false; // true once grid has been populated
+
+  // ── Mobile tab state ───────────────────────────────────────────────────────
+  const MOBILE_TABS = ['home', 'stars', 'recents', 'favs'];
+  let activeMobileTab = 'home';
+
+  function updateMobileNavActive() {
+    document.querySelectorAll('#sp-mobile-nav .sp-nav-btn').forEach(btn => {
+      btn.classList.toggle('sp-active', btn.dataset.tab === activeMobileTab);
+    });
+  }
+
+  function setMobileTab(tab, skipAnim) {
+    const oldIdx = MOBILE_TABS.indexOf(activeMobileTab);
+    const newIdx = MOBILE_TABS.indexOf(tab);
+    activeMobileTab = tab;
+    updateMobileNavActive();
+    if (tab === 'home') {
+      hideRecentsView();
+      showMainContent();
+      if (!playerOpen) {
+        openPlayer();
+      } else {
+        if (playerViewEl) playerViewEl.style.display = '';
+      }
+    } else if (tab === 'stars') {
+      if (playerOpen) closePlayer();
+      hideRecentsView();
+      showStarsTab();
+    } else if (tab === 'recents') {
+      if (playerOpen) closePlayer();
+      showRecentsView();
+    } else {
+      // favs
+      if (playerOpen) closePlayer();
+      hideRecentsView();
+      showMainContent();
+      document.querySelector('nav div.bookmarked')?.click();
+    }
+    if (!skipAnim) {
+      requestAnimationFrame(() => applySwipeEnter(getSwipeViewEl(), newIdx > oldIdx ? 'left' : 'right'));
+    }
+  }
+
+  function createMobileNav() {
+    if (document.getElementById('sp-mobile-nav')) return;
+    const nav = document.createElement('div');
+    nav.id = 'sp-mobile-nav';
+    const tabs = [
+      { id: 'home',    label: 'Home',    svg: '<path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/>' },
+      { id: 'stars',   label: 'Stars',   svg: '<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>' },
+      { id: 'recents', label: 'Recents', svg: '<path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zm4.24 16L11 13.5V7h1.5v5.87l4.75 2.82-1.01 1.74z"/>' },
+      { id: 'favs',    label: 'Favs',    svg: '<path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>' },
+    ];
+    tabs.forEach(({ id, label, svg }) => {
+      const btn = document.createElement('button');
+      btn.className = 'sp-nav-btn' + (id === activeMobileTab ? ' sp-active' : '');
+      btn.dataset.tab = id;
+      btn.innerHTML = `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">${svg}</svg><span>${label}</span>`;
+      btn.addEventListener('click', () => setMobileTab(id));
+      nav.appendChild(btn);
+    });
+    document.body.appendChild(nav);
+  }
+
+  const TAB_LABELS = { home: 'Home', stars: 'Stars', recents: 'Recents', favs: 'Favs' };
+
+  function getSwipeViewEl() {
+    if (activeMobileTab === 'home')    return playerViewEl;
+    if (activeMobileTab === 'stars')   return document.getElementById('stars-view');
+    if (activeMobileTab === 'recents') return recentsGridEl;
+    return document.querySelector('main');
+  }
+
+  function applySwipeEnter(el, dir) {
+    if (!el) return;
+    const cls = dir === 'left' ? 'sp-enter-from-right' : 'sp-enter-from-left';
+    el.classList.remove('sp-enter-from-right', 'sp-enter-from-left');
+    void el.offsetWidth;
+    el.classList.add(cls);
+    el.addEventListener('animationend', () => el.classList.remove(cls), { once: true });
+  }
+
+  function doSwipe(newTab, dir, outEl) {
+    if (outEl) {
+      outEl.style.transition = 'transform 0.22s ease';
+      outEl.style.transform = `translateX(${dir === 'left' ? -110 : 110}vw)`;
+      setTimeout(() => {
+        outEl.style.transition = '';
+        outEl.style.transform = '';
+        setMobileTab(newTab, true);
+        requestAnimationFrame(() => applySwipeEnter(getSwipeViewEl(), dir));
+      }, 220);
+    } else {
+      setMobileTab(newTab, true);
+      requestAnimationFrame(() => applySwipeEnter(getSwipeViewEl(), dir));
+    }
+  }
+
+  function showSwipeHint(dx, fromIdx) {
+    let hint = document.getElementById('sp-swipe-hint');
+    if (!hint) return;
+    const isNext = dx < 0;
+    const targetIdx = fromIdx + (isNext ? 1 : -1);
+    if (targetIdx < 0 || targetIdx >= MOBILE_TABS.length) {
+      hint.style.opacity = '0'; return;
+    }
+    hint.querySelector('.sp-sh-label').textContent = TAB_LABELS[MOBILE_TABS[targetIdx]];
+    hint.querySelector('.sp-sh-arrow').textContent = isNext ? '›' : '‹';
+    hint.style.left   = isNext ? 'auto' : '0';
+    hint.style.right  = isNext ? '0'    : 'auto';
+    hint.style.borderRadius = isNext ? '10px 0 0 10px' : '0 10px 10px 0';
+    hint.style.opacity = String(Math.min(1, Math.abs(dx) / 80));
+  }
+
+  function hideSwipeHint() {
+    const hint = document.getElementById('sp-swipe-hint');
+    if (hint) { hint.style.opacity = '0'; }
+  }
+
+  function initSwipeHint() {
+    if (document.getElementById('sp-swipe-hint')) return;
+    const hint = document.createElement('div');
+    hint.id = 'sp-swipe-hint';
+    hint.innerHTML = '<span class="sp-sh-arrow"></span><span class="sp-sh-label"></span>';
+    document.body.appendChild(hint);
+  }
+
+  function setupMobileSwipe() {
+    initSwipeHint();
+    let _tsx = 0, _tsy = 0, _swipeDir = null, _swiping = false, _outEl = null;
+
+    document.addEventListener('touchstart', e => {
+      _tsx = e.touches[0].clientX;
+      _tsy = e.touches[0].clientY;
+      _swipeDir = null; _swiping = false;
+      _outEl = getSwipeViewEl();
+    }, { passive: true });
+
+    document.addEventListener('touchmove', e => {
+      const dx = e.touches[0].clientX - _tsx;
+      const dy = e.touches[0].clientY - _tsy;
+      if (!_swipeDir && (Math.abs(dx) > 8 || Math.abs(dy) > 8))
+        _swipeDir = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
+      if (_swipeDir !== 'h') return;
+      const idx = MOBILE_TABS.indexOf(activeMobileTab);
+      if ((dx < 0 && idx >= MOBILE_TABS.length - 1) || (dx > 0 && idx <= 0)) return;
+      _swiping = true;
+      if (_outEl) _outEl.style.transform = `translateX(${dx * 0.35}px)`;
+      showSwipeHint(dx, idx);
+    }, { passive: true });
+
+    document.addEventListener('touchend', e => {
+      const dx = e.changedTouches[0].clientX - _tsx;
+      const dy = e.changedTouches[0].clientY - _tsy;
+      hideSwipeHint();
+      if (!_swiping) return;
+      if (Math.abs(dx) < 60 || Math.abs(dx) <= Math.abs(dy)) {
+        // snap back
+        if (_outEl) { _outEl.style.transition = 'transform 0.2s ease'; _outEl.style.transform = ''; setTimeout(() => { if (_outEl) _outEl.style.transition = ''; }, 200); }
+        return;
+      }
+      const idx = MOBILE_TABS.indexOf(activeMobileTab);
+      const newTab = dx < 0 ? MOBILE_TABS[idx + 1] : MOBILE_TABS[idx - 1];
+      if (!newTab) { if (_outEl) { _outEl.style.transform = ''; } return; }
+      doSwipe(newTab, dx < 0 ? 'left' : 'right', _outEl);
+    }, { passive: true });
+  }
 
   function numCols() { return window.innerWidth < 768 ? 1 : 3; }
 
@@ -1607,16 +1952,211 @@
 
   function isMobilePlayer() { return window.innerWidth < 768; }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // RECENTS GRID (mobile) — custom cover grid replacing the React virtual list
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  async function showRecentsView() {
+    if (!recentsGridEl) {
+      recentsGridEl = document.createElement('div');
+      recentsGridEl.id = 'recents-grid-view';
+      document.body.appendChild(recentsGridEl);
+    }
+    recentsGridEl.style.display = 'flex';
+    if (recentsGridBuilt) return;
+
+    recentsGridEl.innerHTML = '<div id="recents-grid-loading">Loading…</div>';
+    document.querySelector('nav div.likes')?.click();
+    await new Promise(r => setTimeout(r, 600));
+
+    const ids = extractIdsFromFiber();
+    recentsGridEl.innerHTML = '';
+
+    // Build context list for the video overlay (same shape as stars context)
+    const contextList = ids.map(id => ({
+      id,
+      coverSrc:  `data/Likes/covers/${id}.jpg`,
+      videoPath: `data/Likes/videos/${id}.mp4`,
+      authorName: '', desc: '',
+    }));
+
+    // ── Stats overlay (shown/hidden by button) ──────────────────────────────
+    const statsOverlay = document.createElement('div');
+    statsOverlay.id = 'recents-stats-overlay';
+
+    const statsBtn = document.createElement('button');
+    statsBtn.id = 'recents-stats-btn';
+    statsBtn.textContent = '📈';
+    statsBtn.title = 'Stats';
+    statsBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      const open = statsOverlay.classList.toggle('recents-stats-open');
+      if (open) {
+        statsOverlay.innerHTML = '';
+
+        // ── Build stats from archive data (E is module-scoped in app.js, not window.E)
+        // findArchiveData() walks the React fiber and returns the full E object
+        // because E has both videoDescriptions and videos properties.
+        const archData = findArchiveData();
+        const lk = archData && archData.likes;
+        const total      = (lk && lk.total)                        || ids.length;
+        const downloaded = (lk && lk.downloaded && lk.downloaded.size) || 0;
+
+        // disappeared = downloaded videos no longer in officialList (mirrors app.js Ke.disappeared)
+        let disappeared = 0;
+        if (lk && lk.downloaded && lk.officialList) {
+          const offSet = new Set(lk.officialList);
+          disappeared = [...lk.downloaded].filter(n => !offSet.has(n)).length;
+        }
+
+        // date from lastRun (timestamps in seconds)
+        let lastRunDate = null;
+        if (lk && lk.lastRun) {
+          const ts = Math.max(lk.lastRun.start || 0, lk.lastRun.finish || 0);
+          if (ts > 0) lastRunDate = ts;
+        }
+
+        // ── Find Redux dispatch — context value shape is {store} so dispatch
+        //    is at val.store.dispatch or val.dispatch (older react-redux)
+        function findDispatch() {
+          const rootEl = [document.getElementById('archive'), document.querySelector('main'), document.body]
+            .filter(Boolean).find(el => Object.keys(el).some(k => k.startsWith('__reactFiber') || k.startsWith('__reactInternalInstance')));
+          if (!rootEl) return null;
+          const rootKey = Object.keys(rootEl).find(k => k.startsWith('__reactFiber') || k.startsWith('__reactInternalInstance'));
+          const stack = [rootEl[rootKey]]; let walked = 0;
+          while (stack.length && walked < 200000) {
+            const fiber = stack.pop(); if (!fiber) continue; walked++;
+            const val = fiber.memoizedProps && fiber.memoizedProps.value;
+            if (val) {
+              // react-redux 8+: context value = {store, subscription}
+              const d = (val.store && val.store.dispatch) || val.dispatch;
+              if (typeof d === 'function') return d;
+            }
+            if (fiber.sibling) stack.push(fiber.sibling);
+            if (fiber.child)   stack.push(fiber.child);
+          }
+          return null;
+        }
+
+        // ── Render stats row ─────────────────────────────────────────────────
+        const p = document.createElement('p');
+        p.style.cssText = 'display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin:0;padding:12px 16px;font-size:14px;color:#ccc;';
+
+        const mkSpan = (text, clickFn) => {
+          const s = document.createElement('span');
+          s.textContent = text;
+          if (clickFn) { s.style.cssText = 'cursor:pointer;text-decoration:underline;color:#f66;'; s.addEventListener('click', clickFn); }
+          return s;
+        };
+
+        p.appendChild(mkSpan(`❤️ ${total}`));
+
+        if (disappeared > 0) {
+          p.appendChild(mkSpan(`⛔️ ${disappeared}`, ev => {
+            ev.stopPropagation();
+            // Switch to Likes tab in React + dispatch disappeared view
+            document.querySelector('nav div.likes')?.click();
+            const dispatch = findDispatch();
+            if (dispatch) dispatch({ type: 'routes/click_disappeared_video_count' });
+            statsOverlay.classList.remove('recents-stats-open');
+            setMobileTab('home');
+          }));
+        }
+
+        if (downloaded > 0) p.appendChild(mkSpan(`⬇️ ${downloaded}`));
+
+        if (lastRunDate) {
+          const d = new Date(lastRunDate * 1000);
+          p.appendChild(mkSpan(`🏃🏼‍♀️ ${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`));
+        }
+
+        statsOverlay.appendChild(p);
+      }
+    });
+    recentsGridEl.appendChild(statsOverlay);
+    recentsGridEl.appendChild(statsBtn);
+
+    // ── Grid ────────────────────────────────────────────────────────────────
+    const grid = document.createElement('div');
+    grid.id = 'recents-grid';
+
+    ids.forEach((id, idx) => {
+      const card = document.createElement('div');
+      card.className = 'recents-card';
+
+      // Cover wrapper — reuse stars-grid-cover for consistent styling
+      const cover = document.createElement('div');
+      cover.className = 'stars-grid-cover recents-cover-wrap';
+      card.appendChild(cover);
+
+      const img = document.createElement('img');
+      img.loading = 'lazy';
+      img.src = `data/Likes/covers/${id}.jpg`;
+      cover.appendChild(img);
+
+      // Tap cover → open video overlay (same as stars, returns to recents)
+      cover.addEventListener('click', () => {
+        const info = getVideoInfo(id);
+        contextList[idx].authorName = info.authorName || '';
+        contextList[idx].desc       = info.desc       || '';
+        openVideoOverlay(idx, contextList);
+      });
+
+      // Star button (top-right) ── same position as stars-grid-remove
+      const starBtn = document.createElement('button');
+      starBtn.className = 'stars-grid-remove recents-star-btn';
+      const refreshStarBtn = () => {
+        const on = Boolean(stars[id]);
+        starBtn.textContent = on ? '★' : '☆';
+        starBtn.title = on ? 'Remove from Stars' : 'Add to Stars';
+        starBtn.classList.toggle('recents-star-active', on);
+      };
+      refreshStarBtn();
+      starBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        toggleStar(id, `data/Likes/covers/${id}.jpg`);
+        refreshStarBtn();
+      });
+      cover.appendChild(starBtn);
+
+      // Group button (top-left) ── same position as stars-grid-add-group
+      const grpBtn = document.createElement('button');
+      grpBtn.className = 'stars-grid-add-group recents-grp-btn';
+      grpBtn.textContent = '⊕';
+      grpBtn.title = 'Add to group';
+      grpBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        showGroupPicker(grpBtn, id);
+      });
+      cover.appendChild(grpBtn);
+
+      grid.appendChild(card);
+    });
+
+    recentsGridEl.appendChild(grid);
+    recentsGridBuilt = true;
+  }
+
+  function hideRecentsView() {
+    if (recentsGridEl) recentsGridEl.style.display = 'none';
+  }
+
   async function openPlayer() {
     if (starsTabActive) showMainContent();
 
     if (isMobilePlayer()) {
       // Mobile: show loading screen, build list, then scroll-snap feed
       playerOpen = true;
-      document.querySelector('nav .player-tab')?.classList.add('active');
+      activeMobileTab = 'home'; updateMobileNavActive();
       showMobilePlayerLoading();
       playerVideoList = await buildVideoList();
       if (!playerOpen) { hideMobilePlayerView(); return; }
+      // If a specific video was requested (e.g. tapped from recents grid), put it first
+      if (playerStartId) {
+        const si = playerVideoList.findIndex(v => v.id === playerStartId);
+        if (si > 0) { const [it] = playerVideoList.splice(si, 1); playerVideoList.unshift(it); }
+        playerStartId = null;
+      }
       playerColumnOffsets = [0];
       renderMobilePlayerContent();
     } else {
@@ -1633,7 +2173,7 @@
     closeVideoOverlay();
     document.getElementById('player-overlay')?.remove();
     hideMobilePlayerView();
-    document.querySelector('nav .player-tab')?.classList.remove('active');
+    if (!isMobilePlayer()) document.querySelector('nav .player-tab')?.classList.remove('active');
   }
 
   // Show #player-view immediately as a fixed loading screen.
@@ -1667,30 +2207,14 @@
     if (!playerViewEl) return;
     playerViewEl.innerHTML = '';
 
-    // Minimal header: back button + counter
-    const header = document.createElement('div');
-    header.id = 'player-view-header';
-
-    const backBtn = document.createElement('button');
-    backBtn.id = 'player-view-back';
-    backBtn.textContent = '← Back';
-    backBtn.addEventListener('click', closePlayer);
-    header.appendChild(backBtn);
-
-    const counter = document.createElement('span');
-    counter.id = 'player-counter';
-    header.appendChild(counter);
-
     if (!playerVideoList.length) {
       const empty = document.createElement('div');
       empty.id = 'player-view-loading';
       empty.textContent = 'No videos found.';
-      playerViewEl.appendChild(header);
       playerViewEl.appendChild(empty);
       return;
     }
 
-    playerViewEl.appendChild(header);
     renderMobileScrollFeed(playerViewEl);
   }
 
@@ -1826,6 +2350,38 @@
       overlay.appendChild(stage);
     } else {
       renderMobileScrollFeed(overlay);
+      // Mobile: swipe on the overlay container (more reliable than per-slide)
+      let _otsx = 0, _otsy = 0, _odir = null, _oswiping = false;
+      overlay.addEventListener('touchstart', e => {
+        _otsx = e.touches[0].clientX; _otsy = e.touches[0].clientY;
+        _odir = null; _oswiping = false;
+      }, { passive: true });
+      overlay.addEventListener('touchmove', e => {
+        const dx = e.touches[0].clientX - _otsx;
+        const dy = e.touches[0].clientY - _otsy;
+        if (!_odir && (Math.abs(dx) > 8 || Math.abs(dy) > 8))
+          _odir = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
+        if (_odir !== 'h') return;
+        const tidx = MOBILE_TABS.indexOf(activeMobileTab);
+        if ((dx < 0 && tidx >= MOBILE_TABS.length - 1) || (dx > 0 && tidx <= 0)) return;
+        _oswiping = true;
+        overlay.style.transform = `translateX(${dx * 0.35}px)`;
+        showSwipeHint(dx, tidx);
+      }, { passive: true });
+      overlay.addEventListener('touchend', e => {
+        const dx = e.changedTouches[0].clientX - _otsx;
+        const dy = e.changedTouches[0].clientY - _otsy;
+        hideSwipeHint();
+        if (!_oswiping) return;
+        if (Math.abs(dx) >= 60 && Math.abs(dx) > Math.abs(dy)) {
+          const tidx = MOBILE_TABS.indexOf(activeMobileTab);
+          const newTab = dx < 0 ? MOBILE_TABS[tidx + 1] : MOBILE_TABS[tidx - 1];
+          if (newTab) { doSwipe(newTab, dx < 0 ? 'left' : 'right', overlay); return; }
+        }
+        overlay.style.transition = 'transform 0.2s ease';
+        overlay.style.transform = '';
+        setTimeout(() => { overlay.style.transition = ''; }, 200);
+      }, { passive: true });
     }
 
     document.body.appendChild(overlay);
@@ -1882,6 +2438,153 @@
       counter.title = `Showing first ${MOBILE_CAP} of ${total}`;
     }
 
+    // ── Single fixed controls layer (stays put while videos scroll) ──────────
+    let currentMuted = true;
+    let currentItem  = null;
+    let currentVid   = null;
+
+    const ctrlLayer = document.createElement('div');
+    ctrlLayer.id = 'player-overlay-controls';
+
+    const rightCenter = document.createElement('div');
+    rightCenter.className = 'player-right-center';
+
+    const thumbUpBtn = document.createElement('button');
+    thumbUpBtn.className = 'player-ctrl-btn player-thumb-btn player-thumb-up';
+    thumbUpBtn.title = 'Add to Liked';
+    thumbUpBtn.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z"/></svg>';
+    thumbUpBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      if (!currentItem) return;
+      const now = toggleQuickGroup(currentItem.id, 'liked');
+      thumbUpBtn.classList.toggle('active', now);
+      // Mutually exclusive: remove from disliked if adding to liked
+      if (now) {
+        const dg = groups.find(x => x.name === 'disliked');
+        if (dg) { dg.videoIds = dg.videoIds.filter(id => id !== currentItem.id); saveGroups(); }
+        thumbDownBtn.classList.remove('active');
+      }
+    });
+
+    const thumbDownBtn = document.createElement('button');
+    thumbDownBtn.className = 'player-ctrl-btn player-thumb-btn player-thumb-down';
+    thumbDownBtn.title = 'Add to Disliked';
+    thumbDownBtn.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M15 3H6c-.83 0-1.54.5-1.84 1.22l-3.02 7.05c-.09.23-.14.47-.14.73v2c0 1.1.9 2 2 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L9.83 23l6.59-6.59c.36-.36.58-.86.58-1.41V5c0-1.1-.9-2-2-2zm4 0v12h4V3h-4z"/></svg>';
+    thumbDownBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      if (!currentItem) return;
+      const now = toggleQuickGroup(currentItem.id, 'disliked');
+      thumbDownBtn.classList.toggle('active', now);
+      // Mutually exclusive: remove from liked if adding to disliked
+      if (now) {
+        const lg = groups.find(x => x.name === 'liked');
+        if (lg) { lg.videoIds = lg.videoIds.filter(id => id !== currentItem.id); saveGroups(); }
+        thumbUpBtn.classList.remove('active');
+      }
+    });
+
+    const starBtn = document.createElement('button');
+    starBtn.className = 'player-ctrl-btn player-star-btn';
+    starBtn.innerHTML = '★';
+    starBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      if (!currentItem) return;
+      toggleStar(currentItem.id, currentItem.coverSrc);
+      starBtn.classList.toggle('active', Boolean(stars[currentItem.id]));
+      starBtn.title = stars[currentItem.id] ? 'Remove from Stars' : 'Add to Stars';
+    });
+
+    const lvlBtn = document.createElement('button');
+    lvlBtn.className = 'player-ctrl-btn player-lvl-btn';
+    lvlBtn.title = 'Set level';
+    lvlBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      if (!currentItem) return;
+      showLevelPicker(lvlBtn, currentItem.id, newLvl => {
+        lvlBtn.textContent = newLvl != null ? String(newLvl) : 'lvl';
+        lvlBtn.classList.toggle('active', newLvl != null);
+        if (starsTabActive) renderStarsView();
+      });
+    });
+
+    const groupBtn = document.createElement('button');
+    groupBtn.className = 'player-ctrl-btn player-group-btn';
+    groupBtn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>';
+    groupBtn.title = 'Add to group';
+    groupBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      if (!currentItem) return;
+      showGroupPicker(groupBtn, currentItem.id);
+    });
+
+    const muteBtn = document.createElement('button');
+    muteBtn.className = 'player-ctrl-btn player-mute-btn';
+    muteBtn.innerHTML = muteIcon(true);
+    muteBtn.title = 'Unmute';
+    muteBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      currentMuted = !currentMuted;
+      if (currentVid) currentVid.muted = currentMuted;
+      muteBtn.innerHTML = muteIcon(currentMuted);
+      muteBtn.title = currentMuted ? 'Unmute' : 'Mute';
+    });
+
+    rightCenter.appendChild(thumbUpBtn);
+    rightCenter.appendChild(thumbDownBtn);
+    rightCenter.appendChild(starBtn);
+    rightCenter.appendChild(lvlBtn);
+    rightCenter.appendChild(groupBtn);
+    ctrlLayer.appendChild(rightCenter);
+    ctrlLayer.appendChild(muteBtn);
+
+    const authorEl  = document.createElement('div');
+    authorEl.className = 'player-author';
+    ctrlLayer.appendChild(authorEl);
+
+    const captionEl = document.createElement('div');
+    captionEl.className = 'player-caption';
+    ctrlLayer.appendChild(captionEl);
+
+    // Close/back button — shown when player was launched from another tab (e.g. Stars)
+    if (playerReturnTab) {
+      const closeBtn = document.createElement('button');
+      closeBtn.className = 'player-ctrl-btn player-overlay-close';
+      closeBtn.textContent = '✕';
+      closeBtn.title = 'Close';
+      closeBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        closePlayer();
+        setMobileTab(playerReturnTab);
+        playerReturnTab = null;
+      });
+      ctrlLayer.appendChild(closeBtn);
+    }
+
+    overlay.appendChild(ctrlLayer);
+
+    // Called by IntersectionObserver each time a new slide becomes dominant
+    function updateControls(item, vid) {
+      currentItem = item;
+      currentVid  = vid;
+      vid.muted   = currentMuted;
+
+      thumbUpBtn.classList.toggle('active', inQuickGroup(item.id, 'liked'));
+      thumbDownBtn.classList.toggle('active', inQuickGroup(item.id, 'disliked'));
+
+      starBtn.classList.toggle('active', Boolean(stars[item.id]));
+      starBtn.title = stars[item.id] ? 'Remove from Stars' : 'Add to Stars';
+
+      lvlBtn.textContent = levels[item.id] != null ? String(levels[item.id]) : 'lvl';
+      lvlBtn.classList.toggle('active', levels[item.id] != null);
+
+      const info    = getVideoInfo(item.id);
+      const name    = info.authorName || item.authorName || '';
+      const caption = info.desc || '';
+      authorEl.textContent  = name ? '@' + name : '';
+      captionEl.textContent = caption.length > 120 ? caption.slice(0, 120) + '…' : caption;
+    }
+    // ── End fixed controls layer ─────────────────────────────────────────────
+
     const videoEls = [];
 
     renderList.forEach((item, idx) => {
@@ -1893,97 +2596,26 @@
       const video = document.createElement('video');
       video.src = item.videoPath;
       video.preload = 'none';
-      video.muted = true;
+      video.muted = currentMuted;
       video.playsInline = true;
       video.poster = item.coverSrc;
       video.className = 'player-video';
       video.addEventListener('playing', () => { video.poster = ''; }, { once: true });
       video.addEventListener('ended',   () => { video.currentTime = 0; video.play().catch(() => {}); });
       video.addEventListener('contextmenu', e => { e.preventDefault(); video.paused ? video.play().catch(() => {}) : video.pause(); });
-      let _tsy = 0;
-      slide.addEventListener('touchstart', e => { _tsy = e.touches[0].clientY; }, { passive: true });
+
+      let _stx = 0, _sty = 0;
+      slide.addEventListener('touchstart', e => { _stx = e.touches[0].clientX; _sty = e.touches[0].clientY; }, { passive: true });
       slide.addEventListener('touchend', e => {
-        if (Math.abs(_tsy - e.changedTouches[0].clientY) < 20) {
+        const dx = e.changedTouches[0].clientX - _stx;
+        const dy = e.changedTouches[0].clientY - _sty;
+        // Tap only — overlay handles horizontal swipe, feed handles vertical scroll
+        if (Math.abs(dx) < 15 && Math.abs(dy) < 15) {
           video.paused ? video.play().catch(() => {}) : video.pause();
         }
       }, { passive: true });
+
       slide.appendChild(video);
-
-      // Controls overlay (same layout as desktop columns)
-      const controls = document.createElement('div');
-      controls.className = 'player-controls';
-
-      const rightCenter = document.createElement('div');
-      rightCenter.className = 'player-right-center';
-
-      const starBtn = document.createElement('button');
-      starBtn.className = 'player-ctrl-btn player-star-btn' + (stars[item.id] ? ' active' : '');
-      starBtn.innerHTML = '★';
-      starBtn.title = stars[item.id] ? 'Remove from Stars' : 'Add to Stars';
-      starBtn.addEventListener('click', e => {
-        e.stopPropagation();
-        toggleStar(item.id, item.coverSrc);
-        starBtn.classList.toggle('active', Boolean(stars[item.id]));
-        starBtn.title = stars[item.id] ? 'Remove from Stars' : 'Add to Stars';
-      });
-
-      const lvlBtn = document.createElement('button');
-      lvlBtn.className = 'player-ctrl-btn player-lvl-btn';
-      lvlBtn.textContent = levels[item.id] != null ? String(levels[item.id]) : 'lvl';
-      lvlBtn.title = 'Set level';
-      lvlBtn.addEventListener('click', e => {
-        e.stopPropagation();
-        showLevelPicker(lvlBtn, item.id, newLvl => {
-          lvlBtn.textContent = newLvl != null ? String(newLvl) : 'lvl';
-          lvlBtn.classList.toggle('active', newLvl != null);
-          if (starsTabActive) renderStarsView();
-        });
-      });
-
-      const groupBtn = document.createElement('button');
-      groupBtn.className = 'player-ctrl-btn player-group-btn';
-      groupBtn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>';
-      groupBtn.title = 'Add to group';
-      groupBtn.addEventListener('click', e => { e.stopPropagation(); showGroupPicker(groupBtn, item.id); });
-
-      rightCenter.appendChild(starBtn);
-      rightCenter.appendChild(lvlBtn);
-      rightCenter.appendChild(groupBtn);
-      controls.appendChild(rightCenter);
-
-      {
-        const info = getVideoInfo(item.id);
-        const name = info.authorName || item.authorName || '';
-        const caption = info.desc || '';
-        if (name) {
-          const auth = document.createElement('div');
-          auth.className = 'player-author';
-          auth.textContent = '@' + name;
-          controls.appendChild(auth);
-        }
-        if (caption) {
-          const cap = document.createElement('div');
-          cap.className = 'player-caption';
-          cap.textContent = caption.length > 120 ? caption.slice(0, 120) + '…' : caption;
-          controls.appendChild(cap);
-        }
-      }
-
-      let muted = true;
-      const muteBtn = document.createElement('button');
-      muteBtn.className = 'player-ctrl-btn player-mute-btn';
-      muteBtn.innerHTML = muteIcon(true);
-      muteBtn.title = 'Unmute';
-      muteBtn.addEventListener('click', e => {
-        e.stopPropagation();
-        muted = !muted;
-        video.muted = muted;
-        muteBtn.innerHTML = muteIcon(muted);
-        muteBtn.title = muted ? 'Unmute' : 'Mute';
-      });
-      controls.appendChild(muteBtn);
-
-      slide.appendChild(controls);
       feed.appendChild(slide);
       videoEls.push(video);
     });
@@ -1994,7 +2626,6 @@
       if (h > 0) {
         feed.querySelectorAll('.player-slide').forEach(s => { s.style.height = h + 'px'; });
       } else {
-        // Retry once more if layout hasn't resolved yet
         requestAnimationFrame(setSlideHeights);
       }
     };
@@ -2015,6 +2646,7 @@
         const vid = videoEls[idx];
         if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
           playerColumnOffsets[0] = idx;
+          updateControls(renderList[idx], vid);
           vid.play().catch(() => {});
           if (counter) counter.textContent = `${idx + 1} / ${rendered}`;
         } else {
@@ -2026,6 +2658,7 @@
     feed.querySelectorAll('.player-slide').forEach(s => io.observe(s));
 
     // Kick off the starting video
+    updateControls(renderList[startIdx], videoEls[startIdx]);
     videoEls[startIdx]?.play().catch(() => {});
     if (counter) counter.textContent = `${startIdx + 1} / ${rendered}`;
   }
@@ -2491,12 +3124,18 @@ render();
     });
     scanCards();
 
-    const nav = document.querySelector('nav');
-    if (nav) {
-      new MutationObserver(injectNavTabs).observe(nav, { childList: true });
+    if (isMobilePlayer()) {
+      createMobileNav();
+      setupMobileSwipe();
+      // Show loading overlay immediately, then open player
+      showMobilePlayerLoading();
+      setTimeout(() => { if (!playerOpen) setMobileTab('home'); }, 300);
+    } else {
+      const nav = document.querySelector('nav');
+      if (nav) new MutationObserver(injectNavTabs).observe(nav, { childList: true });
+      injectNavTabs();
+      watchNavClicks();
     }
-
-    watchNavClicks();
   }
 
   // ── Expose live API for pop-out windows ──────────────────────────────────
@@ -2540,7 +3179,7 @@ render();
 
       /* ── Bottom-right panel ── */
       #star-panel {
-        position: fixed; bottom: 62px; right: 20px; z-index: 999;
+        position: fixed; bottom: 72px; right: 20px; z-index: 999;
         background: #1e1e1e; border: 1px solid #555; border-radius: 8px;
         width: 360px; max-height: 70vh; display: flex; flex-direction: column;
         box-shadow: 0 4px 20px rgba(0,0,0,.7); overflow: hidden;
@@ -2605,6 +3244,7 @@ render();
       .stars-inline-cancel  { background:none; border:none; cursor:pointer; font-size:13px; padding:2px 4px; color:#c66; }
       #stars-main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
       #stars-main-header { display:flex; align-items:baseline; gap:10px; padding:14px 18px 10px; flex-shrink:0; border-bottom:1px solid #333; }
+      #stars-mobile-header { display: none; }
       .stars-main-title { font-size:16px; font-weight:600; }
       .stars-main-count { font-size:12px; color:#666; }
       #stars-grid { flex:1; overflow-y:auto; padding:14px 18px; display:grid; grid-template-columns:repeat(auto-fill,minmax(110px,1fr)); gap:14px; align-content:start; }
@@ -2779,7 +3419,7 @@ render();
         }
         .overlay-video { border-radius: 0; }
         .overlay-close { opacity: 1; }
-        #video-overlay { bottom: 62px; } /* above bottom nav */
+        #video-overlay { bottom: 72px; } /* above bottom nav */
       }
 
       /* ── Player overlay ── */
@@ -2891,38 +3531,147 @@ render();
         .player-column:not([data-col="0"]) { display: none; }
         /* Hotkeys are desktop-only */
         #player-hotkeys { display: none; }
+        /* Hide header bar on mobile — bottom nav replaces it */
+        #player-header { display: none !important; }
         /* Slightly bigger touch targets */
         .player-ctrl-btn { width: 52px; height: 52px; font-size: 22px; }
         .player-col-nav-btn { width: 42px !important; height: 42px !important; font-size: 20px !important; }
-        /* Stars sidebar becomes a horizontal scrolling pill strip */
+        /* Stars: hide sidebar, show compact mobile header instead */
         #stars-view { flex-direction: column; }
-        #stars-sidebar {
-          width: 100%; flex-direction: row; flex-wrap: nowrap;
-          overflow-x: auto; overflow-y: hidden;
-          border-right: none; border-bottom: 1px solid #3a3a3a;
-          padding: 4px 8px; gap: 4px;
-        }
-        #stars-sidebar::-webkit-scrollbar { height: 3px; }
-        #stars-sidebar::-webkit-scrollbar-thumb { background: #444; border-radius: 2px; }
-        .stars-sidebar-divider { display: none; }
-        .stars-group-item {
-          white-space: nowrap; flex-shrink: 0;
-          border-radius: 20px; background: #222;
-          padding: 5px 12px;
-        }
-        .stars-group-item.active { background: #333; }
-        .stars-group-row { flex-shrink: 0; }
-        .stars-group-action { display: none; }
-        #stars-new-group-btn { margin: 2px 0; white-space: nowrap; flex-shrink: 0; }
-        #stars-main-header { padding: 10px 12px 8px; }
+        #stars-sidebar { display: none !important; }
+        #stars-main-header { display: none !important; }
         #stars-grid { padding: 10px 12px; gap: 10px; }
+
+        /* ── Mobile stars: title-only header ── */
+        #stars-main { position: relative; overflow: hidden; }
+        #stars-mobile-header {
+          display: flex; flex-direction: column; gap: 0;
+          flex-shrink: 0; z-index: 10;
+          padding: 12px 14px 10px;
+          background: rgba(13,13,13,0.97);
+          box-shadow: 0 2px 16px rgba(0,0,0,0.5);
+          pointer-events: none; user-select: none;
+        }
+        #stars-mobile-header > :first-child { display: flex; align-items: center; }
+        #stars-mobile-title {
+          display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;
+          pointer-events: none;
+        }
+        #stars-mobile-title .stars-main-title {
+          font-size: 18px; font-weight: 700; color: #fff;
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        #stars-mobile-title .stars-main-count { font-size: 12px; color: #666; flex-shrink: 0; }
+
+        /* ── Filter buttons: fixed bottom-right stack (like player controls) ── */
+        #stars-mobile-filters {
+          position: fixed;
+          bottom: calc(77px + env(safe-area-inset-bottom, 0px) + 16px);
+          right: 14px;
+          display: flex; flex-direction: column; gap: 10px;
+          z-index: 210; pointer-events: auto;
+          align-items: center;
+        }
+        .stars-filter-btn {
+          width: 42px; height: 42px;
+          background: rgba(20,20,20,0.82); border: 1px solid rgba(80,80,80,0.5);
+          border-radius: 50%; color: #aaa; cursor: pointer;
+          font-size: 18px; font-weight: 700; line-height: 1;
+          display: flex; align-items: center; justify-content: center;
+          backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+          transition: color .15s, border-color .15s, background .15s;
+          flex-shrink: 0; padding: 0;
+        }
+        .stars-filter-btn.active { color: #fff; border-color: rgba(255,255,255,0.6); background: rgba(60,60,60,0.92); }
+        .stars-filter-btn.stars-filter-thumb-up.active  { color: #4caf50; border-color: #4caf50; }
+        .stars-filter-btn.stars-filter-thumb-down.active { color: #f44336; border-color: #f44336; }
+
+        /* ── Group picker: bottom sheet ── */
+        #stars-mobile-groups-wrap {
+          position: fixed;
+          bottom: calc(77px + env(safe-area-inset-bottom, 0px));
+          left: 0; right: 0;
+          max-height: 52vh;
+          overflow-y: auto; -webkit-overflow-scrolling: touch;
+          background: rgba(13,13,13,0.97);
+          padding: 14px 14px 18px;
+          z-index: 209; border-top: 1px solid #2a2a2a;
+          pointer-events: auto; scrollbar-width: none;
+        }
+        #stars-mobile-groups-wrap::-webkit-scrollbar { display: none; }
+        #stars-mobile-groups { display: flex; flex-wrap: wrap; gap: 8px; }
+        .stars-mobile-group-pill {
+          background: rgba(35,35,35,0.9); border: 1px solid rgba(70,70,70,0.6);
+          border-radius: 20px; color: #888; cursor: pointer; padding: 5px 13px;
+          font-size: 12px; white-space: nowrap;
+          transition: color .15s, border-color .15s, background .15s;
+        }
+        .stars-mobile-group-pill.active { color: #fff; border-color: rgba(255,255,255,0.5); background: rgba(55,55,55,0.95); }
+        /* ── Lvl number strip ── */
+        #stars-mobile-lvl-strip {
+          display: flex; gap: 6px; overflow-x: auto; padding: 8px 0 6px;
+          scrollbar-width: none; pointer-events: auto; flex-shrink: 0;
+        }
+        #stars-mobile-lvl-strip::-webkit-scrollbar { display: none; }
+        .stars-filter-lvl-num {
+          min-width: 34px; padding: 5px 8px; font-size: 13px; border-radius: 8px;
+        }
+
+        /* ── Recents grid (mobile) ── */
+        #recents-grid-view {
+          position: fixed; inset: 0;
+          bottom: calc(77px + env(safe-area-inset-bottom, 0px));
+          z-index: 500; background: #0d0d0d;
+          flex-direction: column; overflow-y: auto;
+          -webkit-overflow-scrolling: touch;
+        }
+        #recents-grid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 2px; padding: 2px;
+        }
+        .recents-card { position: relative; }
+        /* reuse stars-grid-cover for the cover wrapper */
+        .recents-cover-wrap { border-radius: 0; }
+        /* always show star + group buttons on mobile (no hover) */
+        .recents-cover-wrap .stars-grid-remove,
+        .recents-cover-wrap .stars-grid-add-group { opacity: 0.8 !important; }
+        .recents-star-btn { font-size: 13px !important; }
+        .recents-star-active { color: #ffe234 !important; }
+        #recents-grid-loading {
+          flex: 1; display: flex; align-items: center; justify-content: center;
+          color: #555; font-size: 15px;
+        }
+        /* ── Recents: stats button (bottom-right, like stars filters) ── */
+        #recents-stats-btn {
+          position: fixed;
+          bottom: calc(77px + env(safe-area-inset-bottom, 0px) + 16px);
+          right: 14px; z-index: 210;
+          width: 42px; height: 42px; border-radius: 50%;
+          background: rgba(20,20,20,0.82); border: 1px solid rgba(80,80,80,0.5);
+          color: #fff; font-size: 18px; cursor: pointer;
+          display: flex; align-items: center; justify-content: center;
+          backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+        }
+        /* ── Recents: stats bottom sheet ── */
+        #recents-stats-overlay {
+          position: fixed;
+          bottom: calc(77px + env(safe-area-inset-bottom, 0px));
+          left: 0; right: 0;
+          background: rgba(13,13,13,0.97);
+          padding: 14px 16px 18px; z-index: 209;
+          border-top: 1px solid #2a2a2a;
+          font-size: 14px; display: none;
+          pointer-events: auto;
+        }
+        #recents-stats-overlay.recents-stats-open { display: block; }
 
         /* ── Hide star bubble on mobile ── */
         #star-toggle { display: none !important; }
 
         /* ── Mobile player: fixed full-screen view (display toggled via JS) ── */
         #player-view {
-          position: fixed; inset: 0; bottom: 62px; z-index: 3000;
+          position: fixed; inset: 0; bottom: 72px; z-index: 3000;
           background: #0d0d0d; flex-direction: column;
           /* display controlled entirely by JS (style.display = 'flex' / 'none') */
         }
@@ -2950,50 +3699,57 @@ render();
           overflow: hidden !important;
         }
 
-        /* ── Hide Explain nav tab on mobile ── */
-        nav > div.explain-tab { display: none !important; }
+        /* ── Prevent text selection during swipes ── */
+        #sp-mobile-nav, #sp-swipe-hint, #player-view, #stars-view,
+        .sp-nav-btn, #stars-mobile-header {
+          user-select: none; -webkit-user-select: none;
+        }
 
-        /* ── Bottom tab bar ── */
-        nav {
-          position: fixed !important;
-          bottom: 0 !important; top: auto !important;
-          left: 0 !important; right: 0 !important;
-          /* 100vw escapes any width-constrained parent container */
-          width: 100vw !important; height: 62px !important;
-          flex-direction: row !important; align-items: stretch !important;
-          border-top: 1px solid #2a2a2a !important; border-bottom: none !important;
-          overflow-x: auto !important; overflow-y: hidden !important;
-          z-index: 500 !important; padding: 0 !important;
-          background: #1a1a1a !important;
-          /* Reset any margin/transform that could shift it right */
-          margin: 0 !important; transform: none !important;
+        /* ── Hide original React nav entirely on mobile ── */
+        nav { display: none !important; }
+
+        /* ── Custom bottom nav bar ── */
+        #sp-mobile-nav {
+          position: fixed; bottom: 0; left: 0; right: 0; z-index: 600;
+          background: #1a1a1a; border-top: 1px solid #2a2a2a;
+          display: flex; height: 72px; align-items: stretch;
+          padding-bottom: 10px; box-sizing: border-box;
         }
-        /* Each tab: icon centred above label */
-        nav > div {
-          flex: 1 1 0 !important; min-width: 54px !important;
-          flex-direction: column !important; align-items: center !important;
-          justify-content: center !important; gap: 2px !important;
-          padding: 5px 4px 3px !important;
-          font-size: 10px !important; line-height: 1.2 !important;
-          border-bottom: none !important; border-top: 3px solid transparent !important;
+        .sp-nav-btn {
+          flex: 1; display: flex; flex-direction: column; align-items: center;
+          justify-content: center; gap: 3px; background: none; border: none;
+          color: #555; font-size: 10px; cursor: pointer;
+          border-top: 3px solid transparent; transition: color .15s;
+          padding: 5px 4px 3px;
         }
-        nav > div.active {
-          border-bottom: none !important;
-          border-top: 3px solid var(--active, currentColor) !important;
+        .sp-nav-btn.sp-active { color: #fff; border-top-color: #fff; }
+        .sp-nav-btn svg { flex-shrink: 0; }
+
+        /* ── Swipe hint indicator ── */
+        #sp-swipe-hint {
+          position: fixed; top: 50%; transform: translateY(-50%);
+          background: rgba(40,40,40,0.85); backdrop-filter: blur(10px);
+          color: #fff; display: flex; align-items: center; gap: 6px;
+          padding: 10px 16px; z-index: 700; pointer-events: none;
+          opacity: 0; font-size: 14px; font-weight: 600;
+          border: 1px solid rgba(255,255,255,0.12);
+          transition: opacity 0.05s;
         }
-        nav > div svg { width: 22px !important; height: 22px !important; }
-        /* Flip injected-tab active indicator from bottom → top */
-        nav .stars-tab, nav .player-tab {
-          border-bottom: none !important; border-top: 3px solid transparent !important;
-        }
-        nav .stars-tab.active, nav .player-tab.active {
-          border-bottom: none !important;
-          border-top: 3px solid var(--active, #d7d7d7) !important;
-        }
+        .sp-sh-arrow { font-size: 22px; line-height: 1; }
+
+        /* ── View entrance animations ── */
+        @keyframes sp-enter-from-right { from { transform: translateX(100vw); } to { transform: translateX(0); } }
+        @keyframes sp-enter-from-left  { from { transform: translateX(-100vw); } to { transform: translateX(0); } }
+        .sp-enter-from-right { animation: sp-enter-from-right 0.25s cubic-bezier(0.4,0,0.2,1) both; }
+        .sp-enter-from-left  { animation: sp-enter-from-left  0.25s cubic-bezier(0.4,0,0.2,1) both; }
+
         /* Push all page content above the fixed bottom nav */
-        body { padding-bottom: 62px !important; }
-        /* Stars view must not slip behind nav */
-        #stars-view { max-height: calc(100vh - 62px) !important; }
+        body { padding-bottom: 72px !important; }
+        /* Stars view: fixed full-screen overlay (avoids dead space from header parent) */
+        #stars-view {
+          position: fixed !important; top: 0 !important; left: 0 !important; right: 0 !important;
+          bottom: 72px !important; max-height: none !important; z-index: 500;
+        }
         /* ── Mobile card grid layout ── */
         main { overflow-x: hidden !important; }
         main > * { min-width: 0 !important; }
@@ -3051,14 +3807,59 @@ render();
           right: 12px; left: 12px; bottom: 74px;
         }
         #star-toggle { bottom: 70px; right: 12px; }
-        /* Tighter player header */
-        #player-header { padding: 6px 10px; gap: 4px; }
-        #player-title { font-size: 13px; }
-        #player-counter { display: none; }
-        .player-nav-btn { padding: 6px 12px; }
-        .player-header-btn { padding: 5px 6px; }
         /* Smaller grid min so more columns fit */
         #stars-grid { grid-template-columns: repeat(auto-fill, minmax(85px, 1fr)); }
+
+        /* ── Mobile player: controls fixed to overlay, not scrolling with slide ── */
+        #player-overlay { overflow: hidden; }
+        .player-controls { display: none; }    /* hide per-slide controls */
+        #player-overlay-controls {              /* single fixed controls layer */
+          position: absolute; inset: 0; pointer-events: none; z-index: 10;
+        }
+        #player-overlay-controls .player-right-center {
+          position: absolute; right: 10px; bottom: 120px;
+          top: auto; transform: none;
+          display: flex; flex-direction: column; gap: 10px;
+          pointer-events: auto; align-items: center;
+        }
+        #player-overlay-controls .player-ctrl-btn {
+          width: 41px; height: 41px; font-size: 18px;
+        }
+        #player-overlay-controls .player-author {
+          position: absolute; bottom: 32px; left: 12px;
+          font-size: 13px; font-weight: 600; pointer-events: none;
+          text-shadow: 0 1px 4px rgba(0,0,0,.9); color: #fff;
+          max-width: 58%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        #player-overlay-controls .player-caption {
+          position: absolute; bottom: 14px; left: 12px;
+          font-size: 11px; color: rgba(255,255,255,.85); pointer-events: none;
+          text-shadow: 0 1px 3px rgba(0,0,0,.8);
+          max-width: 58%; line-height: 1.4;
+          display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+        }
+        #player-overlay-controls .player-mute-btn {
+          position: absolute; bottom: 14px; right: 10px;
+          pointer-events: auto; width: 41px; height: 41px; font-size: 18px;
+        }
+        #player-overlay-controls .player-overlay-close {
+          position: absolute; top: 10px; right: 10px;
+          pointer-events: auto; width: 36px; height: 36px; font-size: 18px;
+          background: rgba(0,0,0,0.45); border: none; color: #fff;
+          border-radius: 50%; display: flex; align-items: center; justify-content: center;
+        }
+        #player-overlay-controls .player-thumb-up.active  { color: #4caf50; }
+        #player-overlay-controls .player-thumb-down.active { color: #f44336; }
+
+        /* Safe area inset for iPhone home indicator */
+        #sp-mobile-nav {
+          padding-bottom: calc(15px + env(safe-area-inset-bottom, 0px)) !important;
+          height: calc(77px + env(safe-area-inset-bottom, 0px)) !important;
+        }
+        body { padding-bottom: calc(77px + env(safe-area-inset-bottom, 0px)) !important; }
+        #stars-view {
+          bottom: calc(77px + env(safe-area-inset-bottom, 0px)) !important;
+        }
       }
 
       /* Very small phones: 2-col star panel grid */
