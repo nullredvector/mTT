@@ -1993,28 +1993,77 @@
       const open = statsOverlay.classList.toggle('recents-stats-open');
       if (open) {
         statsOverlay.innerHTML = '';
-        // Clone the stats row rendered by React (row 0 of the virtual list)
-        const statsEl = document.querySelector('p[style*="gap: 14px"]');
-        if (statsEl) {
-          const clone = statsEl.cloneNode(true);
-          clone.style.color = '#ccc';
-          // cloneNode doesn't copy React synthetic event listeners — rewire manually
-          const origDisappeared = statsEl.querySelector('.disappeared');
-          const cloneDisappeared = clone.querySelector('.disappeared');
-          if (origDisappeared && cloneDisappeared) {
-            cloneDisappeared.style.cursor = 'pointer';
-            cloneDisappeared.addEventListener('click', e => {
-              e.stopPropagation();
-              origDisappeared.click();
-              statsOverlay.classList.remove('recents-stats-open');
-              // Switch to home tab so the disappeared videos view is visible
-              setMobileTab('home');
-            });
-          }
-          statsOverlay.appendChild(clone);
-        } else {
-          statsOverlay.textContent = `📈 ${ids.length} videos`;
+
+        // ── Build stats directly from window.E (no DOM cloning needed) ──────
+        const E = window.E;
+        const total      = (E && E.likes && E.likes.total)                  || ids.length;
+        const downloaded = (E && E.likes && E.likes.downloaded && E.likes.downloaded.size) || 0;
+
+        // disappeared = downloaded videos no longer in officialList
+        let disappeared = 0;
+        if (E && E.likes && E.likes.downloaded && E.likes.officialList) {
+          const offSet = new Set(E.likes.officialList);
+          disappeared = [...E.likes.downloaded].filter(n => !offSet.has(n)).length;
         }
+
+        // date from lastRun
+        let lastRunDate = null;
+        if (E && E.likes && E.likes.lastRun) {
+          const { start, finish } = E.likes.lastRun;
+          const ts = Math.max(start || 0, finish || 0);
+          if (ts > 0) lastRunDate = ts;
+        }
+
+        // ── Find Redux dispatch to fire click_disappeared_video_count ────────
+        function findDispatch() {
+          const rootEl = [document.getElementById('archive'), document.querySelector('main'), document.body]
+            .filter(Boolean).find(el => Object.keys(el).some(k => k.startsWith('__reactFiber') || k.startsWith('__reactInternalInstance')));
+          if (!rootEl) return null;
+          const rootKey = Object.keys(rootEl).find(k => k.startsWith('__reactFiber') || k.startsWith('__reactInternalInstance'));
+          const stack = [rootEl[rootKey]]; let walked = 0;
+          while (stack.length && walked < 200000) {
+            const fiber = stack.pop(); if (!fiber) continue; walked++;
+            const val = fiber.memoizedProps && fiber.memoizedProps.value;
+            if (val && typeof val.dispatch === 'function' && typeof val.getState === 'function') return val.dispatch;
+            if (fiber.sibling) stack.push(fiber.sibling);
+            if (fiber.child)   stack.push(fiber.child);
+          }
+          return null;
+        }
+
+        // ── Render stats row ─────────────────────────────────────────────────
+        const p = document.createElement('p');
+        p.style.cssText = 'display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin:0;padding:12px 16px;font-size:14px;color:#ccc;';
+
+        const mkSpan = (text, clickFn) => {
+          const s = document.createElement('span');
+          s.textContent = text;
+          if (clickFn) { s.style.cssText = 'cursor:pointer;text-decoration:underline;color:#f66;'; s.addEventListener('click', clickFn); }
+          return s;
+        };
+
+        p.appendChild(mkSpan(`❤️ ${total}`));
+
+        if (disappeared > 0) {
+          p.appendChild(mkSpan(`⛔️ ${disappeared}`, ev => {
+            ev.stopPropagation();
+            // Switch to Likes tab in React + dispatch disappeared view
+            document.querySelector('nav div.likes')?.click();
+            const dispatch = findDispatch();
+            if (dispatch) dispatch({ type: 'routes/click_disappeared_video_count' });
+            statsOverlay.classList.remove('recents-stats-open');
+            setMobileTab('home');
+          }));
+        }
+
+        if (downloaded > 0) p.appendChild(mkSpan(`⬇️ ${downloaded}`));
+
+        if (lastRunDate) {
+          const d = new Date(lastRunDate * 1000);
+          p.appendChild(mkSpan(`🏃🏼‍♀️ ${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`));
+        }
+
+        statsOverlay.appendChild(p);
       }
     });
     recentsGridEl.appendChild(statsOverlay);
@@ -3510,7 +3559,7 @@ render();
         /* ── Filter buttons: fixed bottom-right stack (like player controls) ── */
         #stars-mobile-filters {
           position: fixed;
-          bottom: calc(72px + env(safe-area-inset-bottom, 0px) + 16px);
+          bottom: calc(77px + env(safe-area-inset-bottom, 0px) + 16px);
           right: 14px;
           display: flex; flex-direction: column; gap: 10px;
           z-index: 210; pointer-events: auto;
@@ -3533,7 +3582,7 @@ render();
         /* ── Group picker: bottom sheet ── */
         #stars-mobile-groups-wrap {
           position: fixed;
-          bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+          bottom: calc(77px + env(safe-area-inset-bottom, 0px));
           left: 0; right: 0;
           max-height: 52vh;
           overflow-y: auto; -webkit-overflow-scrolling: touch;
@@ -3564,7 +3613,7 @@ render();
         /* ── Recents grid (mobile) ── */
         #recents-grid-view {
           position: fixed; inset: 0;
-          bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+          bottom: calc(77px + env(safe-area-inset-bottom, 0px));
           z-index: 500; background: #0d0d0d;
           flex-direction: column; overflow-y: auto;
           -webkit-overflow-scrolling: touch;
@@ -3589,7 +3638,7 @@ render();
         /* ── Recents: stats button (bottom-right, like stars filters) ── */
         #recents-stats-btn {
           position: fixed;
-          bottom: calc(72px + env(safe-area-inset-bottom, 0px) + 16px);
+          bottom: calc(77px + env(safe-area-inset-bottom, 0px) + 16px);
           right: 14px; z-index: 210;
           width: 42px; height: 42px; border-radius: 50%;
           background: rgba(20,20,20,0.82); border: 1px solid rgba(80,80,80,0.5);
@@ -3600,7 +3649,7 @@ render();
         /* ── Recents: stats bottom sheet ── */
         #recents-stats-overlay {
           position: fixed;
-          bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+          bottom: calc(77px + env(safe-area-inset-bottom, 0px));
           left: 0; right: 0;
           background: rgba(13,13,13,0.97);
           padding: 14px 16px 18px; z-index: 209;
@@ -3797,12 +3846,12 @@ render();
 
         /* Safe area inset for iPhone home indicator */
         #sp-mobile-nav {
-          padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px)) !important;
-          height: calc(72px + env(safe-area-inset-bottom, 0px)) !important;
+          padding-bottom: calc(15px + env(safe-area-inset-bottom, 0px)) !important;
+          height: calc(77px + env(safe-area-inset-bottom, 0px)) !important;
         }
-        body { padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)) !important; }
+        body { padding-bottom: calc(77px + env(safe-area-inset-bottom, 0px)) !important; }
         #stars-view {
-          bottom: calc(72px + env(safe-area-inset-bottom, 0px)) !important;
+          bottom: calc(77px + env(safe-area-inset-bottom, 0px)) !important;
         }
       }
 
