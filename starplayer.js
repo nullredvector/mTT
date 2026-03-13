@@ -565,7 +565,9 @@
   function openVideoOverlay(startIdx, contextList) {
     // On mobile route to the scroll-snap feed instead of the small overlay
     if (isMobilePlayer()) {
-      playerReturnTab = starsTabActive ? 'stars' : null;
+      playerReturnTab = activeMobileTab === 'stars' ? 'stars'
+                     : activeMobileTab === 'recents' ? 'recents'
+                     : null;
       playerOpen = true;
       playerVideoList = contextList;
       playerColumnOffsets = [startIdx];
@@ -1961,34 +1963,104 @@
       document.body.appendChild(recentsGridEl);
     }
     recentsGridEl.style.display = 'flex';
-
     if (recentsGridBuilt) return;
 
-    // Loading state
     recentsGridEl.innerHTML = '<div id="recents-grid-loading">Loading…</div>';
-
-    // Click the (hidden) React likes tab to prime the fiber
     document.querySelector('nav div.likes')?.click();
     await new Promise(r => setTimeout(r, 600));
 
     const ids = extractIdsFromFiber();
     recentsGridEl.innerHTML = '';
 
+    // Build context list for the video overlay (same shape as stars context)
+    const contextList = ids.map(id => ({
+      id,
+      coverSrc:  `data/Likes/covers/${id}.jpg`,
+      videoPath: `data/Likes/videos/${id}.mp4`,
+      authorName: '', desc: '',
+    }));
+
+    // ── Stats overlay (shown/hidden by button) ──────────────────────────────
+    const statsOverlay = document.createElement('div');
+    statsOverlay.id = 'recents-stats-overlay';
+
+    const statsBtn = document.createElement('button');
+    statsBtn.id = 'recents-stats-btn';
+    statsBtn.textContent = '❤️';
+    statsBtn.title = 'Stats';
+    statsBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      const open = statsOverlay.classList.toggle('recents-stats-open');
+      if (open) {
+        statsOverlay.innerHTML = '';
+        // Clone the stats row rendered by React (row 0 of the virtual list)
+        const statsEl = document.querySelector('p[style*="gap: 14px"]');
+        if (statsEl) {
+          const clone = statsEl.cloneNode(true);
+          clone.style.color = '#ccc';
+          statsOverlay.appendChild(clone);
+        } else {
+          statsOverlay.textContent = `❤️ ${ids.length} videos`;
+        }
+      }
+    });
+    recentsGridEl.appendChild(statsOverlay);
+    recentsGridEl.appendChild(statsBtn);
+
+    // ── Grid ────────────────────────────────────────────────────────────────
     const grid = document.createElement('div');
     grid.id = 'recents-grid';
 
-    ids.forEach(id => {
+    ids.forEach((id, idx) => {
       const card = document.createElement('div');
       card.className = 'recents-card';
+
+      // Cover wrapper — reuse stars-grid-cover for consistent styling
+      const cover = document.createElement('div');
+      cover.className = 'stars-grid-cover recents-cover-wrap';
+      card.appendChild(cover);
+
       const img = document.createElement('img');
       img.loading = 'lazy';
       img.src = `data/Likes/covers/${id}.jpg`;
-      img.className = 'recents-cover';
-      card.appendChild(img);
-      card.addEventListener('click', () => {
-        playerStartId = id;
-        setMobileTab('home');
+      cover.appendChild(img);
+
+      // Tap cover → open video overlay (same as stars, returns to recents)
+      cover.addEventListener('click', () => {
+        const info = getVideoInfo(id);
+        contextList[idx].authorName = info.authorName || '';
+        contextList[idx].desc       = info.desc       || '';
+        openVideoOverlay(idx, contextList);
       });
+
+      // Star button (top-right) ── same position as stars-grid-remove
+      const starBtn = document.createElement('button');
+      starBtn.className = 'stars-grid-remove recents-star-btn';
+      const refreshStarBtn = () => {
+        const on = Boolean(stars[id]);
+        starBtn.textContent = on ? '★' : '☆';
+        starBtn.title = on ? 'Remove from Stars' : 'Add to Stars';
+        starBtn.classList.toggle('recents-star-active', on);
+      };
+      refreshStarBtn();
+      starBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        toggleStar(id, `data/Likes/covers/${id}.jpg`);
+        refreshStarBtn();
+      });
+      cover.appendChild(starBtn);
+
+      // Group button (top-left) ── same position as stars-grid-add-group
+      const grpBtn = document.createElement('button');
+      grpBtn.className = 'stars-grid-add-group recents-grp-btn';
+      grpBtn.textContent = '⊕';
+      grpBtn.title = 'Add to group';
+      grpBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        showGroupPicker(grpBtn, id);
+      });
+      cover.appendChild(grpBtn);
+
       grid.appendChild(card);
     });
 
@@ -3038,7 +3110,7 @@ render();
 
       /* ── Bottom-right panel ── */
       #star-panel {
-        position: fixed; bottom: 62px; right: 20px; z-index: 999;
+        position: fixed; bottom: 72px; right: 20px; z-index: 999;
         background: #1e1e1e; border: 1px solid #555; border-radius: 8px;
         width: 360px; max-height: 70vh; display: flex; flex-direction: column;
         box-shadow: 0 4px 20px rgba(0,0,0,.7); overflow: hidden;
@@ -3278,7 +3350,7 @@ render();
         }
         .overlay-video { border-radius: 0; }
         .overlay-close { opacity: 1; }
-        #video-overlay { bottom: 62px; } /* above bottom nav */
+        #video-overlay { bottom: 72px; } /* above bottom nav */
       }
 
       /* ── Player overlay ── */
@@ -3425,7 +3497,7 @@ render();
         /* ── Filter buttons: fixed bottom-right stack (like player controls) ── */
         #stars-mobile-filters {
           position: fixed;
-          bottom: calc(62px + env(safe-area-inset-bottom, 0px) + 16px);
+          bottom: calc(72px + env(safe-area-inset-bottom, 0px) + 16px);
           right: 14px;
           display: flex; flex-direction: column; gap: 10px;
           z-index: 210; pointer-events: auto;
@@ -3448,7 +3520,7 @@ render();
         /* ── Group picker: bottom sheet ── */
         #stars-mobile-groups-wrap {
           position: fixed;
-          bottom: calc(62px + env(safe-area-inset-bottom, 0px));
+          bottom: calc(72px + env(safe-area-inset-bottom, 0px));
           left: 0; right: 0;
           max-height: 52vh;
           overflow-y: auto; -webkit-overflow-scrolling: touch;
@@ -3479,7 +3551,7 @@ render();
         /* ── Recents grid (mobile) ── */
         #recents-grid-view {
           position: fixed; inset: 0;
-          bottom: calc(62px + env(safe-area-inset-bottom, 0px));
+          bottom: calc(72px + env(safe-area-inset-bottom, 0px));
           z-index: 500; background: #0d0d0d;
           flex-direction: column; overflow-y: auto;
           -webkit-overflow-scrolling: touch;
@@ -3489,26 +3561,48 @@ render();
           grid-template-columns: repeat(3, 1fr);
           gap: 2px; padding: 2px;
         }
-        .recents-card {
-          aspect-ratio: 9/16; overflow: hidden; cursor: pointer;
-          background: #111; position: relative;
-        }
-        .recents-cover {
-          width: 100%; height: 100%; object-fit: cover; display: block;
-          transition: opacity .2s;
-        }
-        .recents-card:active .recents-cover { opacity: 0.7; }
+        .recents-card { position: relative; }
+        /* reuse stars-grid-cover for the cover wrapper */
+        .recents-cover-wrap { border-radius: 0; }
+        /* always show star + group buttons on mobile (no hover) */
+        .recents-cover-wrap .stars-grid-remove,
+        .recents-cover-wrap .stars-grid-add-group { opacity: 0.8 !important; }
+        .recents-star-btn { font-size: 13px !important; }
+        .recents-star-active { color: #ffe234 !important; }
         #recents-grid-loading {
           flex: 1; display: flex; align-items: center; justify-content: center;
           color: #555; font-size: 15px;
         }
+        /* ── Recents: stats button (bottom-right, like stars filters) ── */
+        #recents-stats-btn {
+          position: fixed;
+          bottom: calc(72px + env(safe-area-inset-bottom, 0px) + 16px);
+          right: 14px; z-index: 210;
+          width: 42px; height: 42px; border-radius: 50%;
+          background: rgba(20,20,20,0.82); border: 1px solid rgba(80,80,80,0.5);
+          color: #fff; font-size: 18px; cursor: pointer;
+          display: flex; align-items: center; justify-content: center;
+          backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+        }
+        /* ── Recents: stats bottom sheet ── */
+        #recents-stats-overlay {
+          position: fixed;
+          bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+          left: 0; right: 0;
+          background: rgba(13,13,13,0.97);
+          padding: 14px 16px 18px; z-index: 209;
+          border-top: 1px solid #2a2a2a;
+          font-size: 14px; display: none;
+          pointer-events: auto;
+        }
+        #recents-stats-overlay.recents-stats-open { display: block; }
 
         /* ── Hide star bubble on mobile ── */
         #star-toggle { display: none !important; }
 
         /* ── Mobile player: fixed full-screen view (display toggled via JS) ── */
         #player-view {
-          position: fixed; inset: 0; bottom: 62px; z-index: 3000;
+          position: fixed; inset: 0; bottom: 72px; z-index: 3000;
           background: #0d0d0d; flex-direction: column;
           /* display controlled entirely by JS (style.display = 'flex' / 'none') */
         }
@@ -3545,9 +3639,9 @@ render();
         /* ── Hide original React nav entirely on mobile ── */
         nav { display: none !important; }
 
-        /* ── Custom bottom nav bar ── */
+        /* ── Custom bottom nav bar (lifted 10px from edge) ── */
         #sp-mobile-nav {
-          position: fixed; bottom: 0; left: 0; right: 0; z-index: 600;
+          position: fixed; bottom: 10px; left: 0; right: 0; z-index: 600;
           background: #1a1a1a; border-top: 1px solid #2a2a2a;
           display: flex; height: 62px; align-items: stretch;
         }
@@ -3580,11 +3674,11 @@ render();
         .sp-enter-from-left  { animation: sp-enter-from-left  0.25s cubic-bezier(0.4,0,0.2,1) both; }
 
         /* Push all page content above the fixed bottom nav */
-        body { padding-bottom: 62px !important; }
+        body { padding-bottom: 72px !important; }
         /* Stars view: fixed full-screen overlay (avoids dead space from header parent) */
         #stars-view {
           position: fixed !important; top: 0 !important; left: 0 !important; right: 0 !important;
-          bottom: 62px !important; max-height: none !important; z-index: 500;
+          bottom: 72px !important; max-height: none !important; z-index: 500;
         }
         /* ── Mobile card grid layout ── */
         main { overflow-x: hidden !important; }
@@ -3690,11 +3784,11 @@ render();
         /* Safe area inset for iPhone home indicator */
         #sp-mobile-nav {
           padding-bottom: env(safe-area-inset-bottom, 0px) !important;
-          height: calc(62px + env(safe-area-inset-bottom, 0px)) !important;
+          height: calc(72px + env(safe-area-inset-bottom, 0px)) !important;
         }
-        body { padding-bottom: calc(62px + env(safe-area-inset-bottom, 0px)) !important; }
+        body { padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)) !important; }
         #stars-view {
-          bottom: calc(62px + env(safe-area-inset-bottom, 0px)) !important;
+          bottom: calc(72px + env(safe-area-inset-bottom, 0px)) !important;
         }
       }
 
