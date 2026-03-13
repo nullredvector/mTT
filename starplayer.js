@@ -2620,47 +2620,50 @@
       videoEls.push(video);
     });
 
-    // Size each slide to exactly fill the feed container (resolved after layout)
+    const startIdx = playerColumnOffsets[0] || 0;
+    const rendered = renderList.length;
+
+    // Size each slide to exactly fill the feed container (resolved after layout).
+    // scrollIntoView and IO setup are deferred until heights are applied so that
+    // the browser can resolve the correct scroll target position.
     const setSlideHeights = () => {
       const h = feed.clientHeight;
       if (h > 0) {
         feed.querySelectorAll('.player-slide').forEach(s => { s.style.height = h + 'px'; });
+
+        // Scroll to starting position NOW that slides have real heights
+        if (startIdx > 0 && feed.children[startIdx]) {
+          feed.children[startIdx].scrollIntoView({ behavior: 'instant' });
+        }
+
+        // IntersectionObserver: play the centered slide, pause everything else.
+        // Set up AFTER scrollIntoView so slide 0 doesn't incorrectly fire first.
+        const io = new IntersectionObserver(entries => {
+          entries.forEach(entry => {
+            const idx = parseInt(entry.target.dataset.idx);
+            const vid = videoEls[idx];
+            if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
+              playerColumnOffsets[0] = idx;
+              updateControls(renderList[idx], vid);
+              vid.play().catch(() => {});
+              if (counter) counter.textContent = `${idx + 1} / ${rendered}`;
+            } else {
+              vid.pause();
+            }
+          });
+        }, { threshold: 0.6 });
+
+        feed.querySelectorAll('.player-slide').forEach(s => io.observe(s));
+
+        // Kick off the starting video
+        updateControls(renderList[startIdx], videoEls[startIdx]);
+        videoEls[startIdx]?.play().catch(() => {});
+        if (counter) counter.textContent = `${startIdx + 1} / ${rendered}`;
       } else {
         requestAnimationFrame(setSlideHeights);
       }
     };
     requestAnimationFrame(setSlideHeights);
-
-    // Restore last-viewed position without animation
-    const startIdx = playerColumnOffsets[0] || 0;
-    if (startIdx > 0 && feed.children[startIdx]) {
-      feed.children[startIdx].scrollIntoView({ behavior: 'instant' });
-    }
-
-    const rendered = renderList.length;
-
-    // IntersectionObserver: play the centered slide, pause everything else
-    const io = new IntersectionObserver(entries => {
-      entries.forEach(entry => {
-        const idx = parseInt(entry.target.dataset.idx);
-        const vid = videoEls[idx];
-        if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
-          playerColumnOffsets[0] = idx;
-          updateControls(renderList[idx], vid);
-          vid.play().catch(() => {});
-          if (counter) counter.textContent = `${idx + 1} / ${rendered}`;
-        } else {
-          vid.pause();
-        }
-      });
-    }, { threshold: 0.6 });
-
-    feed.querySelectorAll('.player-slide').forEach(s => io.observe(s));
-
-    // Kick off the starting video
-    updateControls(renderList[startIdx], videoEls[startIdx]);
-    videoEls[startIdx]?.play().catch(() => {});
-    if (counter) counter.textContent = `${startIdx + 1} / ${rendered}`;
   }
 
   function buildPlayerColumn(item, colIdx) {
