@@ -1994,27 +1994,30 @@
       if (open) {
         statsOverlay.innerHTML = '';
 
-        // ── Build stats directly from window.E (no DOM cloning needed) ──────
-        const E = window.E;
-        const total      = (E && E.likes && E.likes.total)                  || ids.length;
-        const downloaded = (E && E.likes && E.likes.downloaded && E.likes.downloaded.size) || 0;
+        // ── Build stats from archive data (E is module-scoped in app.js, not window.E)
+        // findArchiveData() walks the React fiber and returns the full E object
+        // because E has both videoDescriptions and videos properties.
+        const archData = findArchiveData();
+        const lk = archData && archData.likes;
+        const total      = (lk && lk.total)                        || ids.length;
+        const downloaded = (lk && lk.downloaded && lk.downloaded.size) || 0;
 
-        // disappeared = downloaded videos no longer in officialList
+        // disappeared = downloaded videos no longer in officialList (mirrors app.js Ke.disappeared)
         let disappeared = 0;
-        if (E && E.likes && E.likes.downloaded && E.likes.officialList) {
-          const offSet = new Set(E.likes.officialList);
-          disappeared = [...E.likes.downloaded].filter(n => !offSet.has(n)).length;
+        if (lk && lk.downloaded && lk.officialList) {
+          const offSet = new Set(lk.officialList);
+          disappeared = [...lk.downloaded].filter(n => !offSet.has(n)).length;
         }
 
-        // date from lastRun
+        // date from lastRun (timestamps in seconds)
         let lastRunDate = null;
-        if (E && E.likes && E.likes.lastRun) {
-          const { start, finish } = E.likes.lastRun;
-          const ts = Math.max(start || 0, finish || 0);
+        if (lk && lk.lastRun) {
+          const ts = Math.max(lk.lastRun.start || 0, lk.lastRun.finish || 0);
           if (ts > 0) lastRunDate = ts;
         }
 
-        // ── Find Redux dispatch to fire click_disappeared_video_count ────────
+        // ── Find Redux dispatch — context value shape is {store} so dispatch
+        //    is at val.store.dispatch or val.dispatch (older react-redux)
         function findDispatch() {
           const rootEl = [document.getElementById('archive'), document.querySelector('main'), document.body]
             .filter(Boolean).find(el => Object.keys(el).some(k => k.startsWith('__reactFiber') || k.startsWith('__reactInternalInstance')));
@@ -2024,7 +2027,11 @@
           while (stack.length && walked < 200000) {
             const fiber = stack.pop(); if (!fiber) continue; walked++;
             const val = fiber.memoizedProps && fiber.memoizedProps.value;
-            if (val && typeof val.dispatch === 'function' && typeof val.getState === 'function') return val.dispatch;
+            if (val) {
+              // react-redux 8+: context value = {store, subscription}
+              const d = (val.store && val.store.dispatch) || val.dispatch;
+              if (typeof d === 'function') return d;
+            }
             if (fiber.sibling) stack.push(fiber.sibling);
             if (fiber.child)   stack.push(fiber.child);
           }
