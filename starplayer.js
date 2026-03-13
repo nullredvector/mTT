@@ -3335,21 +3335,17 @@ render();
         #stars-main-header { display: none !important; }
         #stars-grid { padding: 10px 12px; gap: 10px; }
 
-        /* ── Mobile stars: header pinned above scrolling grid ── */
+        /* ── Mobile stars: title-only header ── */
         #stars-main { position: relative; overflow: hidden; }
         #stars-mobile-header {
           display: flex; flex-direction: column; gap: 0;
           flex-shrink: 0; z-index: 10;
-          padding: 10px 14px 10px;
+          padding: 12px 14px 10px;
           background: rgba(13,13,13,0.97);
-          box-shadow: 0 2px 16px rgba(0,0,0,0.6);
-          pointer-events: none;
-          user-select: none;
+          box-shadow: 0 2px 16px rgba(0,0,0,0.5);
+          pointer-events: none; user-select: none;
         }
-        /* Title + filters share one row */
-        #stars-mobile-header > :first-child {
-          display: flex; flex-direction: row; align-items: center; gap: 8px;
-        }
+        #stars-mobile-header > :first-child { display: flex; align-items: center; }
         #stars-mobile-title {
           display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;
           pointer-events: none;
@@ -3358,41 +3354,45 @@ render();
           font-size: 18px; font-weight: 700; color: #fff;
           white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }
-        #stars-mobile-title .stars-main-count {
-          font-size: 12px; color: #666; flex-shrink: 0;
-        }
+        #stars-mobile-title .stars-main-count { font-size: 12px; color: #666; flex-shrink: 0; }
+
+        /* ── Filter buttons: fixed bottom-right stack (like player controls) ── */
         #stars-mobile-filters {
-          display: flex; gap: 5px; align-items: center;
-          pointer-events: auto; flex-shrink: 0;
+          position: fixed;
+          bottom: calc(62px + env(safe-area-inset-bottom, 0px) + 16px);
+          right: 14px;
+          display: flex; flex-direction: column; gap: 10px;
+          z-index: 210; pointer-events: auto;
+          align-items: center;
         }
         .stars-filter-btn {
-          background: rgba(35,35,35,0.9); border: 1px solid rgba(70,70,70,0.7);
-          border-radius: 8px; color: #888; cursor: pointer; padding: 5px 9px;
-          font-size: 13px; font-weight: 600; line-height: 1;
+          width: 42px; height: 42px;
+          background: rgba(20,20,20,0.82); border: 1px solid rgba(80,80,80,0.5);
+          border-radius: 50%; color: #aaa; cursor: pointer;
+          font-size: 18px; font-weight: 700; line-height: 1;
           display: flex; align-items: center; justify-content: center;
+          backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
           transition: color .15s, border-color .15s, background .15s;
-          min-width: 36px;
+          flex-shrink: 0; padding: 0;
         }
-        .stars-filter-btn.active { color: #fff; border-color: rgba(255,255,255,0.55); background: rgba(55,55,55,0.95); }
+        .stars-filter-btn.active { color: #fff; border-color: rgba(255,255,255,0.6); background: rgba(60,60,60,0.92); }
         .stars-filter-btn.stars-filter-thumb-up.active  { color: #4caf50; border-color: #4caf50; }
         .stars-filter-btn.stars-filter-thumb-down.active { color: #f44336; border-color: #f44336; }
-        /* ── Group picker panel: fixed-position dropdown, never clipped ── */
+
+        /* ── Group picker: bottom sheet ── */
         #stars-mobile-groups-wrap {
           position: fixed;
-          top: 54px; left: 0; right: 0;
-          max-height: calc(100vh - 54px - 62px - env(safe-area-inset-bottom, 0px));
+          bottom: calc(62px + env(safe-area-inset-bottom, 0px));
+          left: 0; right: 0;
+          max-height: 52vh;
           overflow-y: auto; -webkit-overflow-scrolling: touch;
           background: rgba(13,13,13,0.97);
-          padding: 10px 14px 16px;
-          z-index: 210;
-          border-bottom: 1px solid #2a2a2a;
-          pointer-events: auto;
-          scrollbar-width: none;
+          padding: 14px 14px 18px;
+          z-index: 209; border-top: 1px solid #2a2a2a;
+          pointer-events: auto; scrollbar-width: none;
         }
         #stars-mobile-groups-wrap::-webkit-scrollbar { display: none; }
-        #stars-mobile-groups {
-          display: flex; flex-wrap: wrap; gap: 8px 8px;
-        }
+        #stars-mobile-groups { display: flex; flex-wrap: wrap; gap: 8px; }
         .stars-mobile-group-pill {
           background: rgba(35,35,35,0.9); border: 1px solid rgba(70,70,70,0.6);
           border-radius: 20px; color: #888; cursor: pointer; padding: 5px 13px;
@@ -3402,11 +3402,13 @@ render();
         .stars-mobile-group-pill.active { color: #fff; border-color: rgba(255,255,255,0.5); background: rgba(55,55,55,0.95); }
         /* ── Lvl number strip ── */
         #stars-mobile-lvl-strip {
-          display: flex; gap: 6px; overflow-x: auto; padding: 10px 0 4px;
-          scrollbar-width: none; pointer-events: auto;
+          display: flex; gap: 6px; overflow-x: auto; padding: 8px 0 6px;
+          scrollbar-width: none; pointer-events: auto; flex-shrink: 0;
         }
         #stars-mobile-lvl-strip::-webkit-scrollbar { display: none; }
-        .stars-filter-lvl-num { min-width: 34px; padding: 4px 8px; font-size: 12px; }
+        .stars-filter-lvl-num {
+          min-width: 34px; padding: 5px 8px; font-size: 13px; border-radius: 8px;
+        }
 
         /* ── Hide star bubble on mobile ── */
         #star-toggle { display: none !important; }
