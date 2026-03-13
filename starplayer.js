@@ -1642,6 +1642,9 @@
   let playerBuilding       = false;
   let playerViewEl         = null;  // mobile tab-view element (like starsViewEl)
   let playerReturnTab      = null;  // tab to return to when player is closed via X button
+  let playerStartId        = null;  // if set, player will start at this video ID
+  let recentsGridEl        = null;  // custom recents grid element
+  let recentsGridBuilt     = false; // true once grid has been populated
 
   // ── Mobile tab state ───────────────────────────────────────────────────────
   const MOBILE_TABS = ['home', 'stars', 'recents', 'favs'];
@@ -1659,6 +1662,7 @@
     activeMobileTab = tab;
     updateMobileNavActive();
     if (tab === 'home') {
+      hideRecentsView();
       showMainContent();
       if (!playerOpen) {
         openPlayer();
@@ -1667,12 +1671,17 @@
       }
     } else if (tab === 'stars') {
       if (playerOpen) closePlayer();
+      hideRecentsView();
       showStarsTab();
-    } else {
+    } else if (tab === 'recents') {
       if (playerOpen) closePlayer();
+      showRecentsView();
+    } else {
+      // favs
+      if (playerOpen) closePlayer();
+      hideRecentsView();
       showMainContent();
-      const cls = tab === 'recents' ? '.likes' : '.bookmarked';
-      document.querySelector(`nav div${cls}`)?.click();
+      document.querySelector('nav div.bookmarked')?.click();
     }
     if (!skipAnim) {
       requestAnimationFrame(() => applySwipeEnter(getSwipeViewEl(), newIdx > oldIdx ? 'left' : 'right'));
@@ -1705,6 +1714,7 @@
   function getSwipeViewEl() {
     if (activeMobileTab === 'home')    return playerViewEl;
     if (activeMobileTab === 'stars')   return document.getElementById('stars-view');
+    if (activeMobileTab === 'recents') return recentsGridEl;
     return document.querySelector('main');
   }
 
@@ -1940,6 +1950,56 @@
 
   function isMobilePlayer() { return window.innerWidth < 768; }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // RECENTS GRID (mobile) — custom cover grid replacing the React virtual list
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  async function showRecentsView() {
+    if (!recentsGridEl) {
+      recentsGridEl = document.createElement('div');
+      recentsGridEl.id = 'recents-grid-view';
+      document.body.appendChild(recentsGridEl);
+    }
+    recentsGridEl.style.display = 'flex';
+
+    if (recentsGridBuilt) return;
+
+    // Loading state
+    recentsGridEl.innerHTML = '<div id="recents-grid-loading">Loading…</div>';
+
+    // Click the (hidden) React likes tab to prime the fiber
+    document.querySelector('nav div.likes')?.click();
+    await new Promise(r => setTimeout(r, 600));
+
+    const ids = extractIdsFromFiber();
+    recentsGridEl.innerHTML = '';
+
+    const grid = document.createElement('div');
+    grid.id = 'recents-grid';
+
+    ids.forEach(id => {
+      const card = document.createElement('div');
+      card.className = 'recents-card';
+      const img = document.createElement('img');
+      img.loading = 'lazy';
+      img.src = `data/Likes/covers/${id}.jpg`;
+      img.className = 'recents-cover';
+      card.appendChild(img);
+      card.addEventListener('click', () => {
+        playerStartId = id;
+        setMobileTab('home');
+      });
+      grid.appendChild(card);
+    });
+
+    recentsGridEl.appendChild(grid);
+    recentsGridBuilt = true;
+  }
+
+  function hideRecentsView() {
+    if (recentsGridEl) recentsGridEl.style.display = 'none';
+  }
+
   async function openPlayer() {
     if (starsTabActive) showMainContent();
 
@@ -1950,6 +2010,12 @@
       showMobilePlayerLoading();
       playerVideoList = await buildVideoList();
       if (!playerOpen) { hideMobilePlayerView(); return; }
+      // If a specific video was requested (e.g. tapped from recents grid), put it first
+      if (playerStartId) {
+        const si = playerVideoList.findIndex(v => v.id === playerStartId);
+        if (si > 0) { const [it] = playerVideoList.splice(si, 1); playerVideoList.unshift(it); }
+        playerStartId = null;
+      }
       playerColumnOffsets = [0];
       renderMobilePlayerContent();
     } else {
@@ -3408,6 +3474,33 @@ render();
         #stars-mobile-lvl-strip::-webkit-scrollbar { display: none; }
         .stars-filter-lvl-num {
           min-width: 34px; padding: 5px 8px; font-size: 13px; border-radius: 8px;
+        }
+
+        /* ── Recents grid (mobile) ── */
+        #recents-grid-view {
+          position: fixed; inset: 0;
+          bottom: calc(62px + env(safe-area-inset-bottom, 0px));
+          z-index: 500; background: #0d0d0d;
+          flex-direction: column; overflow-y: auto;
+          -webkit-overflow-scrolling: touch;
+        }
+        #recents-grid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 2px; padding: 2px;
+        }
+        .recents-card {
+          aspect-ratio: 9/16; overflow: hidden; cursor: pointer;
+          background: #111; position: relative;
+        }
+        .recents-cover {
+          width: 100%; height: 100%; object-fit: cover; display: block;
+          transition: opacity .2s;
+        }
+        .recents-card:active .recents-cover { opacity: 0.7; }
+        #recents-grid-loading {
+          flex: 1; display: flex; align-items: center; justify-content: center;
+          color: #555; font-size: 15px;
         }
 
         /* ── Hide star bubble on mobile ── */
