@@ -1986,7 +1986,7 @@
 
     const statsBtn = document.createElement('button');
     statsBtn.id = 'recents-stats-btn';
-    statsBtn.textContent = '❤️';
+    statsBtn.textContent = '📈';
     statsBtn.title = 'Stats';
     statsBtn.addEventListener('click', e => {
       e.stopPropagation();
@@ -1998,9 +1998,20 @@
         if (statsEl) {
           const clone = statsEl.cloneNode(true);
           clone.style.color = '#ccc';
+          // cloneNode doesn't copy React synthetic event listeners — rewire manually
+          const origDisappeared = statsEl.querySelector('.disappeared');
+          const cloneDisappeared = clone.querySelector('.disappeared');
+          if (origDisappeared && cloneDisappeared) {
+            cloneDisappeared.style.cursor = 'pointer';
+            cloneDisappeared.addEventListener('click', e => {
+              e.stopPropagation();
+              origDisappeared.click();
+              statsOverlay.classList.remove('recents-stats-open');
+            });
+          }
           statsOverlay.appendChild(clone);
         } else {
-          statsOverlay.textContent = `❤️ ${ids.length} videos`;
+          statsOverlay.textContent = `📈 ${ids.length} videos`;
         }
       }
     });
@@ -3639,11 +3650,11 @@ render();
         /* ── Hide original React nav entirely on mobile ── */
         nav { display: none !important; }
 
-        /* ── Custom bottom nav bar (lifted 10px from edge) ── */
+        /* ── Custom bottom nav bar ── */
         #sp-mobile-nav {
-          position: fixed; bottom: 10px; left: 0; right: 0; z-index: 600;
+          position: fixed; bottom: 0; left: 0; right: 0; z-index: 600;
           background: #1a1a1a; border-top: 1px solid #2a2a2a;
-          display: flex; height: 62px; align-items: stretch;
+          display: flex; height: 72px; align-items: center;
         }
         .sp-nav-btn {
           flex: 1; display: flex; flex-direction: column; align-items: center;
