@@ -901,6 +901,7 @@
   let activeLvl        = new Set();   // empty = no filter; set of numbers = multi-select
   let lvlSectionOpen   = true;
   let mobileStarsLvlOpen = false;     // mobile: whether inline lvl strip is visible
+  let mobileStarsGroupsOpen = false;  // mobile: whether group picker panel is expanded
   let groupSortOrder   = 'alpha';     // 'alpha' | 'count'
   let starsContextList = [];        // mirrors the currently rendered video grid order
 
@@ -1114,7 +1115,7 @@
     // ★ All Stars
     const isAll = activeView === null && activeGroupIds.size === 0 && activeLvl.size === 0 && !mobileStarsLvlOpen;
     mobileFilters.appendChild(makeFilterBtn('stars-filter-all', '★', 'All Stars', isAll, () => {
-      activeView = null; activeGroupIds.clear(); activeLvl.clear(); mobileStarsLvlOpen = false; renderStarsView();
+      activeView = null; activeGroupIds.clear(); activeLvl.clear(); mobileStarsLvlOpen = false; mobileStarsGroupsOpen = false; renderStarsView();
     }));
 
     // 👍 Liked group
@@ -1167,27 +1168,39 @@
     lvlFilterBtn.addEventListener('pointercancel', () => { clearTimeout(_lvlTimer); _lvlTimer = null; });
     mobileFilters.appendChild(lvlFilterBtn);
 
-    // Group pills strip (all non-system groups)
+    // "grp" toggle button — opens/closes the group picker panel
     const nonSystemGroups = groups.filter(g => g.name !== 'liked' && g.name !== 'disliked');
     if (nonSystemGroups.length) {
-      const groupStrip = document.createElement('div');
-      groupStrip.id = 'stars-mobile-groups';
-      const sortedNS = [...nonSystemGroups].sort((a, b) => {
-        if (groupSortOrder === 'count') return b.videoIds.length - a.videoIds.length;
-        return a.name.localeCompare(b.name);
+      const grpActiveCount = [...activeGroupIds].filter(id => nonSystemGroups.some(g => g.id === id)).length;
+      const grpLabel = grpActiveCount > 0 ? `grp ${grpActiveCount}` : 'grp';
+      const grpBtnActive = grpActiveCount > 0 || mobileStarsGroupsOpen;
+      const grpBtn = makeFilterBtn('stars-filter-grp', grpLabel, 'Groups', grpBtnActive, () => {
+        mobileStarsGroupsOpen = !mobileStarsGroupsOpen;
+        renderStarsView();
       });
-      sortedNS.forEach(g => {
-        const pill = document.createElement('button');
-        pill.className = 'stars-mobile-group-pill' + (activeGroupIds.has(g.id) ? ' active' : '');
-        pill.textContent = g.name + (g.videoIds.length ? ` ${g.videoIds.length}` : '');
-        pill.addEventListener('click', () => {
-          activeView = null; activeLvl.clear();
-          if (activeGroupIds.has(g.id)) activeGroupIds.delete(g.id); else activeGroupIds.add(g.id);
-          renderStarsView();
+      mobileFilters.appendChild(grpBtn);
+
+      // Expandable group picker panel (shown when open)
+      if (mobileStarsGroupsOpen) {
+        const groupPanel = document.createElement('div');
+        groupPanel.id = 'stars-mobile-groups';
+        const sortedNS = [...nonSystemGroups].sort((a, b) => {
+          if (groupSortOrder === 'count') return b.videoIds.length - a.videoIds.length;
+          return a.name.localeCompare(b.name);
         });
-        groupStrip.appendChild(pill);
-      });
-      mobileHdr.appendChild(groupStrip);
+        sortedNS.forEach(g => {
+          const pill = document.createElement('button');
+          pill.className = 'stars-mobile-group-pill' + (activeGroupIds.has(g.id) ? ' active' : '');
+          pill.textContent = g.name + (g.videoIds.length ? ` ${g.videoIds.length}` : '');
+          pill.addEventListener('click', () => {
+            activeView = null; activeLvl.clear();
+            if (activeGroupIds.has(g.id)) activeGroupIds.delete(g.id); else activeGroupIds.add(g.id);
+            renderStarsView();
+          });
+          groupPanel.appendChild(pill);
+        });
+        mobileHdr.appendChild(groupPanel);
+      }
     }
 
     // Lvl number strip (visible when strip open or a lvl is already selected)
@@ -3319,61 +3332,64 @@ render();
         #stars-main-header { display: none !important; }
         #stars-grid { padding: 10px 12px; gap: 10px; }
 
-        /* ── Mobile stars: floating overlay controls (no layout space consumed) ── */
+        /* ── Mobile stars: sticky floating header ── */
         #stars-main { position: relative; }
         #stars-mobile-header {
           display: flex; flex-direction: column; gap: 0;
           position: sticky; top: 0; z-index: 10;
-          padding: 10px 14px 32px; /* bottom padding = gradient tail */
-          background: linear-gradient(to bottom, rgba(13,13,13,0.97) 50%, transparent 100%);
+          padding: 10px 14px 10px;
+          background: rgba(13,13,13,0.97);
+          box-shadow: 0 2px 16px rgba(0,0,0,0.6);
           pointer-events: none;
-          margin-bottom: -32px; /* pull grid up so gradient overlaps first row */
           user-select: none;
         }
+        /* Title + filters share one row */
+        #stars-mobile-header > :first-child {
+          display: flex; flex-direction: row; align-items: center; gap: 8px;
+        }
         #stars-mobile-title {
-          display: flex; align-items: center; gap: 10px; flex: 1;
+          display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;
           pointer-events: none;
         }
         #stars-mobile-title .stars-main-title {
-          font-size: 20px; font-weight: 700; color: #fff;
+          font-size: 18px; font-weight: 700; color: #fff;
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }
         #stars-mobile-title .stars-main-count {
-          font-size: 13px; color: #777;
-        }
-        /* Title + filters in one row */
-        #stars-mobile-header > :first-child {
-          display: flex; flex-direction: row; align-items: center; gap: 10px;
+          font-size: 12px; color: #666; flex-shrink: 0;
         }
         #stars-mobile-filters {
-          display: flex; gap: 6px; align-items: center;
+          display: flex; gap: 5px; align-items: center;
           pointer-events: auto; flex-shrink: 0;
         }
         .stars-filter-btn {
-          background: rgba(30,30,30,0.85); border: 1px solid rgba(80,80,80,0.6);
-          border-radius: 8px; color: #888; cursor: pointer; padding: 5px 10px;
+          background: rgba(35,35,35,0.9); border: 1px solid rgba(70,70,70,0.7);
+          border-radius: 8px; color: #888; cursor: pointer; padding: 5px 9px;
           font-size: 13px; font-weight: 600; line-height: 1;
           display: flex; align-items: center; justify-content: center;
           transition: color .15s, border-color .15s, background .15s;
-          min-width: 38px; backdrop-filter: blur(4px);
+          min-width: 36px;
         }
-        .stars-filter-btn.active { color: #fff; border-color: rgba(255,255,255,0.6); background: rgba(60,60,60,0.9); }
+        .stars-filter-btn.active { color: #fff; border-color: rgba(255,255,255,0.55); background: rgba(55,55,55,0.95); }
         .stars-filter-btn.stars-filter-thumb-up.active  { color: #4caf50; border-color: #4caf50; }
         .stars-filter-btn.stars-filter-thumb-down.active { color: #f44336; border-color: #f44336; }
+        /* ── Group picker panel (expandable) ── */
         #stars-mobile-groups {
-          display: flex; gap: 6px; overflow-x: auto; padding-top: 8px;
-          scrollbar-width: none; pointer-events: auto;
+          display: flex; flex-wrap: wrap; gap: 6px 8px;
+          padding: 10px 0 4px; pointer-events: auto;
+          max-height: 44vh; overflow-y: auto; scrollbar-width: none;
         }
         #stars-mobile-groups::-webkit-scrollbar { display: none; }
         .stars-mobile-group-pill {
-          background: rgba(30,30,30,0.85); border: 1px solid rgba(80,80,80,0.5);
-          border-radius: 20px; color: #888; cursor: pointer; padding: 4px 12px;
-          font-size: 12px; white-space: nowrap; flex-shrink: 0;
-          backdrop-filter: blur(4px);
+          background: rgba(35,35,35,0.9); border: 1px solid rgba(70,70,70,0.6);
+          border-radius: 20px; color: #888; cursor: pointer; padding: 5px 13px;
+          font-size: 12px; white-space: nowrap;
           transition: color .15s, border-color .15s, background .15s;
         }
-        .stars-mobile-group-pill.active { color: #fff; border-color: rgba(255,255,255,0.5); background: rgba(60,60,60,0.9); }
+        .stars-mobile-group-pill.active { color: #fff; border-color: rgba(255,255,255,0.5); background: rgba(55,55,55,0.95); }
+        /* ── Lvl number strip ── */
         #stars-mobile-lvl-strip {
-          display: flex; gap: 6px; overflow-x: auto; padding-top: 8px;
+          display: flex; gap: 6px; overflow-x: auto; padding: 10px 0 4px;
           scrollbar-width: none; pointer-events: auto;
         }
         #stars-mobile-lvl-strip::-webkit-scrollbar { display: none; }
