@@ -3376,23 +3376,23 @@ render();
         .stars-filter-btn.active { color: #fff; border-color: rgba(255,255,255,0.55); background: rgba(55,55,55,0.95); }
         .stars-filter-btn.stars-filter-thumb-up.active  { color: #4caf50; border-color: #4caf50; }
         .stars-filter-btn.stars-filter-thumb-down.active { color: #f44336; border-color: #f44336; }
-        /* ── Group picker panel (expandable) ── */
+        /* ── Group picker panel: fixed-position dropdown, never clipped ── */
         #stars-mobile-groups-wrap {
-          position: relative; pointer-events: auto;
-          max-height: 48vh; overflow: hidden;
+          position: fixed;
+          top: 54px; left: 0; right: 0;
+          max-height: calc(100vh - 54px - 62px - env(safe-area-inset-bottom, 0px));
+          overflow-y: auto; -webkit-overflow-scrolling: touch;
+          background: rgba(13,13,13,0.97);
+          padding: 10px 14px 16px;
+          z-index: 210;
+          border-bottom: 1px solid #2a2a2a;
+          pointer-events: auto;
+          scrollbar-width: none;
         }
-        #stars-mobile-groups-wrap::after {
-          content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 28px;
-          background: linear-gradient(to bottom, transparent, rgba(13,13,13,0.95));
-          pointer-events: none;
-        }
+        #stars-mobile-groups-wrap::-webkit-scrollbar { display: none; }
         #stars-mobile-groups {
-          display: flex; flex-wrap: wrap; gap: 6px 8px;
-          padding: 10px 0 24px; overflow-y: auto;
-          max-height: 48vh; scrollbar-width: none;
-          -webkit-overflow-scrolling: touch;
+          display: flex; flex-wrap: wrap; gap: 8px 8px;
         }
-        #stars-mobile-groups::-webkit-scrollbar { display: none; }
         .stars-mobile-group-pill {
           background: rgba(35,35,35,0.9); border: 1px solid rgba(70,70,70,0.6);
           border-radius: 20px; color: #888; cursor: pointer; padding: 5px 13px;
