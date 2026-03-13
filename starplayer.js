@@ -3335,11 +3335,11 @@ render();
         #stars-main-header { display: none !important; }
         #stars-grid { padding: 10px 12px; gap: 10px; }
 
-        /* ── Mobile stars: sticky floating header ── */
-        #stars-main { position: relative; }
+        /* ── Mobile stars: header pinned above scrolling grid ── */
+        #stars-main { position: relative; overflow: hidden; }
         #stars-mobile-header {
           display: flex; flex-direction: column; gap: 0;
-          position: sticky; top: 0; z-index: 10;
+          flex-shrink: 0; z-index: 10;
           padding: 10px 14px 10px;
           background: rgba(13,13,13,0.97);
           box-shadow: 0 2px 16px rgba(0,0,0,0.6);
@@ -3447,8 +3447,7 @@ render();
           user-select: none; -webkit-user-select: none;
         }
 
-        /* ── Hide original React header + nav entirely on mobile ── */
-        header { display: none !important; }
+        /* ── Hide original React nav entirely on mobile ── */
         nav { display: none !important; }
 
         /* ── Custom bottom nav bar ── */
@@ -3487,8 +3486,11 @@ render();
 
         /* Push all page content above the fixed bottom nav */
         body { padding-bottom: 62px !important; }
-        /* Stars view must not slip behind nav */
-        #stars-view { max-height: calc(100vh - 62px) !important; }
+        /* Stars view: fixed full-screen overlay (avoids dead space from header parent) */
+        #stars-view {
+          position: fixed !important; top: 0 !important; left: 0 !important; right: 0 !important;
+          bottom: 62px !important; max-height: none !important; z-index: 500;
+        }
         /* ── Mobile card grid layout ── */
         main { overflow-x: hidden !important; }
         main > * { min-width: 0 !important; }
@@ -3596,7 +3598,9 @@ render();
           height: calc(62px + env(safe-area-inset-bottom, 0px)) !important;
         }
         body { padding-bottom: calc(62px + env(safe-area-inset-bottom, 0px)) !important; }
-        #stars-view { max-height: calc(100vh - 62px - env(safe-area-inset-bottom, 0px)) !important; }
+        #stars-view {
+          bottom: calc(62px + env(safe-area-inset-bottom, 0px)) !important;
+        }
       }
 
       /* Very small phones: 2-col star panel grid */
