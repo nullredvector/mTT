@@ -1182,6 +1182,8 @@
 
       // Expandable group picker panel (shown when open)
       if (mobileStarsGroupsOpen) {
+        const groupWrap = document.createElement('div');
+        groupWrap.id = 'stars-mobile-groups-wrap';
         const groupPanel = document.createElement('div');
         groupPanel.id = 'stars-mobile-groups';
         const sortedNS = [...nonSystemGroups].sort((a, b) => {
@@ -1199,7 +1201,8 @@
           });
           groupPanel.appendChild(pill);
         });
-        mobileHdr.appendChild(groupPanel);
+        groupWrap.appendChild(groupPanel);
+        mobileHdr.appendChild(groupWrap);
       }
     }
 
@@ -3374,10 +3377,20 @@ render();
         .stars-filter-btn.stars-filter-thumb-up.active  { color: #4caf50; border-color: #4caf50; }
         .stars-filter-btn.stars-filter-thumb-down.active { color: #f44336; border-color: #f44336; }
         /* ── Group picker panel (expandable) ── */
+        #stars-mobile-groups-wrap {
+          position: relative; pointer-events: auto;
+          max-height: 48vh; overflow: hidden;
+        }
+        #stars-mobile-groups-wrap::after {
+          content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 28px;
+          background: linear-gradient(to bottom, transparent, rgba(13,13,13,0.95));
+          pointer-events: none;
+        }
         #stars-mobile-groups {
           display: flex; flex-wrap: wrap; gap: 6px 8px;
-          padding: 10px 0 4px; pointer-events: auto;
-          max-height: 44vh; overflow-y: auto; scrollbar-width: none;
+          padding: 10px 0 24px; overflow-y: auto;
+          max-height: 48vh; scrollbar-width: none;
+          -webkit-overflow-scrolling: touch;
         }
         #stars-mobile-groups::-webkit-scrollbar { display: none; }
         .stars-mobile-group-pill {
@@ -3434,7 +3447,8 @@ render();
           user-select: none; -webkit-user-select: none;
         }
 
-        /* ── Hide original React nav entirely on mobile ── */
+        /* ── Hide original React header + nav entirely on mobile ── */
+        header { display: none !important; }
         nav { display: none !important; }
 
         /* ── Custom bottom nav bar ── */
