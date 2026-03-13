@@ -2007,6 +2007,8 @@
               e.stopPropagation();
               origDisappeared.click();
               statsOverlay.classList.remove('recents-stats-open');
+              // Switch to home tab so the disappeared videos view is visible
+              setMobileTab('home');
             });
           }
           statsOverlay.appendChild(clone);
@@ -3654,7 +3656,8 @@ render();
         #sp-mobile-nav {
           position: fixed; bottom: 0; left: 0; right: 0; z-index: 600;
           background: #1a1a1a; border-top: 1px solid #2a2a2a;
-          display: flex; height: 72px; align-items: center;
+          display: flex; height: 72px; align-items: stretch;
+          padding-bottom: 10px; box-sizing: border-box;
         }
         .sp-nav-btn {
           flex: 1; display: flex; flex-direction: column; align-items: center;
@@ -3794,7 +3797,7 @@ render();
 
         /* Safe area inset for iPhone home indicator */
         #sp-mobile-nav {
-          padding-bottom: env(safe-area-inset-bottom, 0px) !important;
+          padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px)) !important;
           height: calc(72px + env(safe-area-inset-bottom, 0px)) !important;
         }
         body { padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)) !important; }
