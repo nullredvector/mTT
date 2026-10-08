@@ -3215,6 +3215,8 @@ render();
   let authorViewEl   = null;
   let activeAuthorId = null;
   const openAuthors  = [];   // { id, name }, in nav-tab order
+  let authorPlayAll  = false; // thumbnails on the author page play their videos
+  let authorIO       = null;  // keeps playback to the thumbnails near the viewport
 
   function setAuthorLink(el, name) {
     el.textContent = '@' + name;
@@ -3277,6 +3279,7 @@ render();
   }
 
   function hideAuthorView(resumePlayback = true) {
+    stopAuthorThumbs();
     activeAuthorId = null;
     if (authorViewEl) authorViewEl.style.display = 'none';
     document.body.classList.remove('sp-author-open');
@@ -3300,6 +3303,7 @@ render();
     if (!authorViewEl || !activeAuthorId) return;
     const author = openAuthors.find(a => a.id === activeAuthorId);
     const videos = authorVideos(activeAuthorId);
+    stopAuthorThumbs();
     authorViewEl.innerHTML = '';
 
     const header = document.createElement('div');
@@ -3315,7 +3319,20 @@ render();
     closeBtn.textContent = '✕';
     closeBtn.title = 'Close';
     closeBtn.addEventListener('click', () => closeAuthorTab(activeAuthorId));
-    header.append(title, count, closeBtn);
+    const playAll = document.createElement('button');
+    playAll.className = 'author-playall';
+    const refreshPlayAll = () => {
+      playAll.textContent = authorPlayAll ? '⏸' : '▶';
+      playAll.title = authorPlayAll ? 'Stop playing thumbnails' : 'Play all thumbnails';
+      playAll.classList.toggle('on', authorPlayAll);
+    };
+    refreshPlayAll();
+    playAll.addEventListener('click', () => {
+      authorPlayAll = !authorPlayAll;
+      refreshPlayAll();
+      authorViewEl.querySelectorAll('.author-cover').forEach(c => syncCoverPlayback(c));
+    });
+    header.append(title, count, playAll, closeBtn);
     authorViewEl.appendChild(header);
 
     const grid = document.createElement('div');
@@ -3328,6 +3345,36 @@ render();
     }
     videos.forEach((v, idx) => grid.appendChild(buildAuthorCard(v, idx, videos)));
     authorViewEl.appendChild(grid);
+
+    // Only thumbnails near the viewport hold a <video>, so a long list can't exhaust memory
+    authorIO = new IntersectionObserver(entries => {
+      entries.forEach(e => { e.target._spVisible = e.isIntersecting; syncCoverPlayback(e.target); });
+    }, { root: grid, rootMargin: '200px' });
+    grid.querySelectorAll('.author-cover').forEach(c => authorIO.observe(c));
+  }
+
+  // Attach or release the preview <video> of one thumbnail
+  function syncCoverPlayback(cover) {
+    let vid = cover.querySelector('video.author-thumb-video');
+    if (authorPlayAll && cover._spVisible) {
+      if (vid) { vid.play().catch(() => {}); return; }
+      vid = document.createElement('video');
+      vid.className = 'author-thumb-video';
+      vid.src = cover.dataset.video;
+      vid.muted = true; vid.loop = true; vid.playsInline = true; vid.preload = 'auto';
+      cover.insertBefore(vid, cover.querySelector('img').nextSibling);
+      cover.classList.add('is-playing');
+      vid.play().catch(() => {});
+    } else if (vid) {
+      vid.pause(); vid.removeAttribute('src'); vid.load(); vid.remove();
+      cover.classList.remove('is-playing');
+    }
+  }
+
+  function stopAuthorThumbs() {
+    if (authorIO) { authorIO.disconnect(); authorIO = null; }
+    if (!authorViewEl) return;
+    authorViewEl.querySelectorAll('.author-cover').forEach(c => { c._spVisible = false; syncCoverPlayback(c); });
   }
 
   function buildAuthorCard(v, idx, list) {
@@ -3335,7 +3382,8 @@ render();
     card.className = 'stars-grid-card';
 
     const cover = document.createElement('div');
-    cover.className = 'stars-grid-cover';
+    cover.className = 'stars-grid-cover author-cover';
+    cover.dataset.video = v.videoPath;
     cover.addEventListener('click', () => openVideoOverlay(idx, list));
     const img = document.createElement('img');
     img.loading = 'lazy';
@@ -3655,6 +3703,11 @@ render();
       .sp-author-link:hover { color: #fff; text-decoration: underline; }
       #author-view { display: none; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
       #author-view-header { display: flex; align-items: baseline; gap: 10px; padding: 14px 18px 10px; flex-shrink: 0; border-bottom: 1px solid #333; }
+      .author-playall { align-self: center; background: rgba(255,255,255,.08); border: 1px solid #444; color: #ccc; border-radius: 12px; padding: 1px 10px; font-size: 12px; line-height: 18px; cursor: pointer; }
+      .author-playall:hover { background: rgba(255,255,255,.16); color: #fff; }
+      .author-playall.on { background: rgba(255,255,255,.2); border-color: #888; color: #fff; }
+      .author-thumb-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+      .stars-grid-cover.is-playing::after { display: none; }
       .author-view-close { display: none; margin-left: auto; background: none; border: none; color: #ccc; font-size: 18px; cursor: pointer; padding: 0 4px; }
       #author-grid { flex: 1; overflow-y: auto; padding: 14px 18px; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; align-content: start; }
       .author-empty { color: #777; font-size: 14px; grid-column: 1 / -1; }
