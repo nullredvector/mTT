@@ -816,7 +816,9 @@
       grid.appendChild(e);
     } else {
       starList.forEach(star => {
-        const { desc, authorName } = getVideoInfo(star.id);
+        const info = getVideoInfo(star.id);
+        const authorName = info.authorName || star.authorName || '';
+        const desc       = info.desc       || star.desc       || '';
         const item = document.createElement('div');
         item.className = 'star-panel-item';
 
@@ -1307,7 +1309,9 @@
         grid.appendChild(empty);
       } else {
         videosToShow.forEach(star => {
-          const { desc, authorName } = star.lvlOnly ? { desc: '', authorName: '' } : getVideoInfo(star.id);
+          const info = star.lvlOnly ? { desc: '', authorName: '' } : getVideoInfo(star.id);
+          const authorName = info.authorName || star.authorName || '';
+          const desc       = info.desc       || star.desc       || '';
           const onRemove = star.lvlOnly
             ? () => { delete levels[star.id]; saveLevels(); renderStarsView(); }
             : null;
@@ -1374,7 +1378,9 @@
         grid.appendChild(empty);
       } else {
         videosToShow.forEach(star => {
-          const { desc, authorName } = star.lvlOnly ? { desc: '', authorName: '' } : getVideoInfo(star.id);
+          const info = star.lvlOnly ? { desc: '', authorName: '' } : getVideoInfo(star.id);
+          const authorName = info.authorName || star.authorName || '';
+          const desc       = info.desc       || star.desc       || '';
           // For unstarred cards in group view: ✕ removes from the selected groups (not the level)
           const onRemove = (star.lvlOnly && !isAll)
             ? () => {
