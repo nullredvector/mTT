@@ -3348,7 +3348,7 @@ render();
         tab = document.createElement('div');
         tab.className = 'author-tab pressable';
         tab.dataset.id = a.id;
-        tab.title = '@' + a.name;
+        tab.title = '@' + a.name + ' — double-click to open on TikTok';
         const label = document.createElement('span');
         label.className = 'author-tab-label';
         label.textContent = '@' + a.name;
@@ -3359,6 +3359,10 @@ render();
         x.addEventListener('click', e => { e.stopPropagation(); closeAuthorTab(a.id); });
         tab.append(label, x);
         tab.addEventListener('click', () => { if (activeAuthorId !== a.id) showAuthorTab(a.id, a.name); });
+        tab.addEventListener('dblclick', e => {
+          if (e.target.closest('.author-tab-close')) return;
+          window.open('https://www.tiktok.com/@' + encodeURIComponent(a.name), '_blank', 'noopener');
+        });
         const last = [...nav.querySelectorAll('.author-tab')].pop()
           || nav.querySelector('.player-tab') || nav.querySelector('.stars-tab');
         last?.insertAdjacentElement('afterend', tab);
@@ -3587,6 +3591,23 @@ render();
         color: var(--inactive, rgb(160,160,160)) !important;
         background: none !important; border-bottom-color: transparent !important;
       }
+      /* ── Player + Explain tabs sit to the right of the search field ──
+         They stay in the nav DOM (React owns Explain, other code looks up
+         "nav .player-tab") and are positioned out of the flow instead. */
+      @media (min-width: 769px) {
+        header:has(> nav) {
+          position: relative;
+          padding-right: calc(var(--left-padding, 20px) + 112px);
+        }
+        header:has(> nav) nav .readme,
+        header:has(> nav) nav .player-tab {
+          position: absolute; top: 3.3px; bottom: 0; margin: 0 !important;
+          box-sizing: border-box; width: 52px; padding: 0 !important;
+        }
+        header:has(> nav) nav .readme     { right: var(--left-padding, 20px); }
+        header:has(> nav) nav .player-tab { right: calc(var(--left-padding, 20px) + 56px); }
+      }
+
       .sp-author-link { cursor: pointer; pointer-events: auto !important; }
       .sp-author-link:hover { color: #fff; text-decoration: underline; }
       #author-view { display: none; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
