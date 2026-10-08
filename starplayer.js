@@ -210,10 +210,52 @@
     return null;
   }
 
+  // app.js keeps its data in a module-level variable, so the fiber walk can come
+  // up empty. Load the db files directly as a fallback.
+  let _dbCache = null, _dbLoading = false, _dbFailed = false, _fiberFailAt = 0;
+
+  async function loadArchiveDb() {
+    const files = { videos: 'db_videos.js', authors: 'db_authors.js', videoDescriptions: 'db_texts.js' };
+    const out = {};
+    for (const [key, file] of Object.entries(files)) {
+      const text = await (await fetch('data/.appdata/' + file)).text();
+      const b64 = text.match(/_base64\s*=\s*"([^"]+)"/);
+      let json;
+      if (b64) {
+        const bin = Uint8Array.from(atob(b64[1]), c => c.charCodeAt(0));
+        const stream = new Blob([bin]).stream().pipeThrough(new DecompressionStream('gzip'));
+        json = await new Response(stream).text();
+      } else {
+        const raw = text.match(/String\.raw`([\s\S]*)`/);
+        if (!raw) throw new Error('unrecognised format: ' + file);
+        json = raw[1].replace(/背𓄹剃/g, '`').replace(/⑀⦃/g, '${');
+      }
+      out[key] = JSON.parse(json);
+    }
+    return out;
+  }
+
+  function ensureArchiveDb() {
+    if (_dbCache || _dbLoading || _dbFailed) return;
+    _dbLoading = true;
+    loadArchiveDb()
+      .then(d => {
+        _dbCache = d;
+        if (starsTabActive) renderStarsView();
+        if (panelOpen) renderPanel();
+      })
+      .catch(e => { _dbFailed = true; console.warn('[starplayer] archive db load failed', e); })
+      .finally(() => { _dbLoading = false; });
+  }
+
   function getVideoInfo(videoId) {
-    const id   = String(videoId);
-    const data = findArchiveData();
-    if (!data) return { desc: '', authorName: '' };
+    const id = String(videoId);
+    let data = _dbCache;
+    if (!data && Date.now() - _fiberFailAt > 5000) {
+      data = findArchiveData();
+      if (!data) _fiberFailAt = Date.now();
+    }
+    if (!data) { ensureArchiveDb(); return { desc: '', authorName: '' }; }
 
     const desc = (data.videoDescriptions[id] || data.videoDescriptions[videoId]) || '';
     const v    = data.videos[id] || data.videos[videoId];
