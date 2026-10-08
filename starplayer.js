@@ -95,7 +95,8 @@
     try {
       const ch = new BroadcastChannel('myfaveTT_popout');
       ch.onmessage = e => {
-        const { s, g, l } = e.data || {};
+        const { s, g, l, openAuthor } = e.data || {};
+        if (openAuthor) { openAuthorByName(openAuthor); try { window.focus(); } catch (_) {} }
         if (s) { stars  = s;  saveStarsLocal();  refreshAllButtons(); updateToggleBtn(); }
         if (g) { groups = g;  saveGroupsLocal(); }
         if (l) { levels = l;  saveLevelsLocal(); }
@@ -2966,6 +2967,8 @@ body:hover .ctl,.ctl.pinned{opacity:1}
 .scrim{position:absolute;bottom:0;left:0;right:0;height:180px;background:linear-gradient(transparent,rgba(0,0,0,.8));pointer-events:none}
 .meta{position:absolute;bottom:12px;left:12px;max-width:calc(100% - 70px);pointer-events:none}
 .au{font-size:13px;font-weight:600;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.9);margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.au.lnk{display:inline-block;max-width:100%;vertical-align:top;pointer-events:auto;cursor:pointer}
+.au.lnk:hover{text-decoration:underline}
 .cap{font-size:11px;color:rgba(255,255,255,.85);text-shadow:0 1px 3px rgba(0,0,0,.8);line-height:1.4;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .mu{position:absolute;bottom:10px;right:10px;pointer-events:auto}
 .ct{position:absolute;top:10px;left:50%;transform:translateX(-50%);font-size:11px;color:rgba(255,255,255,.35);pointer-events:none;white-space:nowrap}
@@ -3029,6 +3032,10 @@ function syncAll(s,g,l){
   if(_bc) _bc.postMessage({s,g,l});
   // Also hit the server directly as a safety net
   fetch(API,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({stars:s,groups:g,levels:l})}).catch(()=>{});
+}
+function openAuthor(name){
+  if(_bc) _bc.postMessage({openAuthor:name});
+  try{ if(window.opener&&!window.opener.closed) window.opener.focus(); }catch(_){}
 }
 function ss(s){starsData=s;syncAll(s,groupsData,levelsData);}
 function sg(g){groupsData=g;syncAll(starsData,g,levelsData);}
@@ -3158,7 +3165,11 @@ function render(){
   gb.addEventListener('click',e=>{e.stopPropagation();showGrpPicker(gb,item.id);});
   rc.appendChild(gb);
 
-  document.getElementById('au').textContent=item.authorName?'@'+item.authorName:'';
+  const au=document.getElementById('au');
+  au.textContent=item.authorName?'@'+item.authorName:'';
+  au.classList.toggle('lnk',Boolean(item.authorName));
+  au.title=item.authorName?'All videos by @'+item.authorName:'';
+  au.onclick=item.authorName?function(e){e.stopPropagation();openAuthor(item.authorName);}:null;
   document.getElementById('cp').textContent=item.desc||'';
   document.getElementById('ct').textContent=vids.length>1?(idx+1)+' / '+vids.length:'';
   document.getElementById('mb').innerHTML=mi(muted);
