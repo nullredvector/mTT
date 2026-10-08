@@ -4,6 +4,7 @@ const path = require('path');
 
 const ARCHIVE_DIR = process.env.ARCHIVE_DIR || '/archive';
 const STARS_FILE  = path.join(ARCHIVE_DIR, 'data', '.appdata', 'stars.json');
+const SESSIONS_FILE = path.join(ARCHIVE_DIR, 'data', '.appdata', 'sessions.json');
 
 function load() {
   try {
@@ -25,4 +26,22 @@ function save(data) {
   fs.renameSync(tmp, STARS_FILE);
 }
 
-module.exports = { load, save };
+function loadSessions() {
+  try {
+    const data = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    return Array.isArray(data.sessions) ? data.sessions : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function saveSessions(sessions) {
+  const dir = path.dirname(SESSIONS_FILE);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+  const tmp = SESSIONS_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify({ sessions }, null, 2), 'utf8');
+  fs.renameSync(tmp, SESSIONS_FILE);
+}
+
+module.exports = { load, save, loadSessions, saveSessions };
