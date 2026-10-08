@@ -3597,11 +3597,11 @@ render();
       @media (min-width: 769px) {
         header:has(> nav) {
           position: relative;
-          padding-right: calc(var(--left-padding, 20px) + 112px);
+          padding-right: calc(var(--left-padding, 20px) + 112px) !important;
         }
         header:has(> nav) nav .readme,
         header:has(> nav) nav .player-tab {
-          position: absolute; top: 3.3px; bottom: 0; margin: 0 !important;
+          position: absolute !important; z-index: 2; top: 3.3px !important; bottom: 0; margin: 0 !important;
           box-sizing: border-box; width: 52px; padding: 0 !important;
         }
         header:has(> nav) nav .readme     { right: var(--left-padding, 20px); }
