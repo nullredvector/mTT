@@ -688,6 +688,7 @@
       }
       playerViewEl.style.display = 'flex';
       playerViewEl.style.zIndex = fromAuthor ? '3600' : '';
+      setPreviewsSuspended(true);
       renderMobilePlayerContent();
       return;
     }
@@ -739,6 +740,7 @@
     }, { passive: true });
 
     document.body.appendChild(overlayEl);
+    setPreviewsSuspended(true);
     renderOverlayContent();
     overlayEl.focus();
   }
@@ -750,6 +752,7 @@
     overlayEl = null;
     overlayVideo = null;
     overlayCtx = [];
+    setPreviewsSuspended(false);
     // If player tab was active, deactivate it
     if (playerOpen) {
       playerOpen = false;
@@ -1005,6 +1008,133 @@
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // GRID PREVIEWS — hover/play-all thumbnails and a size slider (stars + author pages)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  let gridPlayAll = false;        // play every thumbnail near the viewport
+  let previewsSuspended = false;  // paused while a full-screen player is open
+  const canHover = typeof matchMedia === 'function' && matchMedia('(hover: hover)').matches;
+  const THUMB_DEFAULTS = { stars: 110, 'stars-m': 85, author: 220, 'author-m': 160 };
+
+  function thumbKey(page) { return isMobilePlayer() ? page + '-m' : page; }
+
+  function loadThumbSize(key) {
+    try {
+      const v = parseInt(localStorage.getItem('sp_thumb_' + key), 10);
+      if (v >= 60 && v <= 420) return v;
+    } catch (_) {}
+    return THUMB_DEFAULTS[key];
+  }
+
+  function saveThumbSize(key, px) {
+    try { localStorage.setItem('sp_thumb_' + key, String(px)); } catch (_) {}
+  }
+
+  function applyThumbSize(grid, px) {
+    grid.style.gridTemplateColumns = `repeat(auto-fill, minmax(${px}px, 1fr))`;
+  }
+
+  // Mark a thumbnail as previewable and add mouse-over playback
+  function attachPreview(cover, videoPath) {
+    if (!videoPath || !/\/videos\/.+\.mp4$/.test(videoPath)) return;
+    cover.classList.add('preview-cover');
+    cover.dataset.video = videoPath;
+    if (!canHover) return;
+    cover.addEventListener('mouseenter', () => { cover._spHover = true;  syncCoverPlayback(cover); });
+    cover.addEventListener('mouseleave', () => { cover._spHover = false; syncCoverPlayback(cover); });
+  }
+
+  // Attach or release the preview <video> of one thumbnail
+  function syncCoverPlayback(cover) {
+    let vid = cover.querySelector('video.preview-video');
+    const want = !previewsSuspended && (cover._spHover || (gridPlayAll && cover._spVisible));
+    if (want) {
+      if (vid) { vid.play().catch(() => {}); return; }
+      const img = cover.querySelector('img');
+      vid = document.createElement('video');
+      vid.className = 'preview-video';
+      vid.src = cover.dataset.video;
+      vid.muted = true; vid.loop = true; vid.playsInline = true; vid.preload = 'auto';
+      cover.insertBefore(vid, img ? img.nextSibling : cover.firstChild);
+      cover.classList.add('is-playing');
+      vid.play().catch(() => {});
+    } else if (vid) {
+      vid.pause(); vid.removeAttribute('src'); vid.load(); vid.remove();
+      cover.classList.remove('is-playing');
+    }
+  }
+
+  // Only thumbnails near the grid's viewport may hold a <video>, so a long list can't exhaust memory
+  function observeGridPreviews(grid) {
+    if (grid._spIO) grid._spIO.disconnect();
+    grid._spIO = new IntersectionObserver(entries => {
+      entries.forEach(e => { e.target._spVisible = e.isIntersecting; syncCoverPlayback(e.target); });
+    }, { root: grid, rootMargin: '200px' });
+    grid.querySelectorAll('.preview-cover').forEach(c => grid._spIO.observe(c));
+  }
+
+  function refreshPreviews(container) {
+    if (container) container.querySelectorAll('.preview-cover').forEach(c => syncCoverPlayback(c));
+  }
+
+  // Drop every preview <video> under a container (before it is hidden or re-rendered)
+  function releaseGridPreviews(container) {
+    if (!container) return;
+    container.querySelectorAll('.preview-grid').forEach(g => {
+      if (g._spIO) { g._spIO.disconnect(); g._spIO = null; }
+    });
+    container.querySelectorAll('.preview-cover').forEach(c => {
+      c._spVisible = false; c._spHover = false; syncCoverPlayback(c);
+    });
+  }
+
+  function setPreviewsSuspended(v) {
+    if (previewsSuspended === v) return;
+    previewsSuspended = v;
+    refreshPreviews(starsViewEl);
+    refreshPreviews(authorViewEl);
+  }
+
+  // Play-all button + thumbnail size slider shown in a page header
+  function buildGridControls(page, grid, container) {
+    const key = thumbKey(page);
+    const wrap = document.createElement('div');
+    wrap.className = 'grid-controls';
+
+    const play = document.createElement('button');
+    play.className = 'grid-playall';
+    const refresh = () => {
+      play.textContent = gridPlayAll ? '⏸' : '▶';
+      play.title = gridPlayAll ? 'Stop playing thumbnails' : 'Play all thumbnails';
+      play.classList.toggle('on', gridPlayAll);
+    };
+    refresh();
+    play.addEventListener('click', e => {
+      e.stopPropagation();
+      gridPlayAll = !gridPlayAll;
+      refresh();
+      refreshPreviews(container);
+    });
+
+    const size = document.createElement('input');
+    size.type = 'range';
+    size.className = 'grid-size';
+    size.min = '60'; size.max = '420'; size.step = '10';
+    size.title = 'Thumbnail size';
+    const start = loadThumbSize(key);
+    size.value = String(start);
+    applyThumbSize(grid, start);
+    size.addEventListener('input', () => {
+      const px = parseInt(size.value, 10);
+      applyThumbSize(grid, px);
+      saveThumbSize(key, px);
+    });
+
+    wrap.append(play, size);
+    return wrap;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // STARS TAB — NAV + CONTENT
   // ═══════════════════════════════════════════════════════════════════════════
 
@@ -1048,12 +1178,13 @@
     starsTabActive = false;
     document.querySelector('main')?.style.removeProperty('display');
     toggleBtn.style.display = '';
-    if (starsViewEl) starsViewEl.style.display = 'none';
+    if (starsViewEl) { releaseGridPreviews(starsViewEl); starsViewEl.style.display = 'none'; }
     if (!isMobilePlayer()) document.querySelector('nav .stars-tab')?.classList.remove('active');
   }
 
   function renderStarsView() {
     if (!starsViewEl) return;
+    releaseGridPreviews(starsViewEl);
     starsViewEl.innerHTML = '';
 
     // ── Sidebar ──────────────────────────────────────────────────────────────
@@ -1508,8 +1639,16 @@
       }
     }
 
+    const isVideoGrid = activeView !== '__lvl_groups__';
+    if (isVideoGrid) {
+      grid.classList.add('preview-grid');
+      mainHeader.appendChild(buildGridControls('stars', grid, starsViewEl));
+      mobileTopRow.appendChild(buildGridControls('stars', grid, starsViewEl));
+    }
+
     mainArea.appendChild(grid);
     starsViewEl.appendChild(mainArea);
+    if (isVideoGrid) observeGridPreviews(grid);
   }
 
   function buildStarsGridCard(star, authorName, desc, onRemoveOverride) {
@@ -1518,6 +1657,7 @@
 
     const cover = document.createElement('div');
     cover.className = 'stars-grid-cover';
+    attachPreview(cover, star.coverSrc ? getVideoPath(star.coverSrc) : null);
     cover.addEventListener('click', () => openVideo(star.coverSrc));
 
     const img = document.createElement('img');
@@ -1778,6 +1918,7 @@
 
   function setMobileTab(tab, skipAnim) {
     if (activeAuthorId) hideAuthorView(false);
+    if (tab !== 'stars') releaseGridPreviews(starsViewEl);
     const oldIdx = MOBILE_TABS.indexOf(activeMobileTab);
     const newIdx = MOBILE_TABS.indexOf(tab);
     activeMobileTab = tab;
@@ -2351,6 +2492,7 @@
     playerViewEl.style.display = 'none';
     playerViewEl.style.zIndex = '';
     playerViewEl.innerHTML = '';
+    setPreviewsSuspended(false);
   }
 
   function renderMobilePlayerContent() {
@@ -3215,8 +3357,6 @@ render();
   let authorViewEl   = null;
   let activeAuthorId = null;
   const openAuthors  = [];   // { id, name }, in nav-tab order
-  let authorPlayAll  = false; // thumbnails on the author page play their videos
-  let authorIO       = null;  // keeps playback to the thumbnails near the viewport
 
   function setAuthorLink(el, name) {
     el.textContent = '@' + name;
@@ -3260,7 +3400,7 @@ render();
     } else {
       if (starsTabActive) {
         starsTabActive = false;
-        if (starsViewEl) starsViewEl.style.display = 'none';
+        if (starsViewEl) { releaseGridPreviews(starsViewEl); starsViewEl.style.display = 'none'; }
         document.querySelector('nav .stars-tab')?.classList.remove('active');
       }
       main?.style.setProperty('display', 'none');
@@ -3276,10 +3416,11 @@ render();
     authorViewEl.style.display = 'flex';
     renderAuthorView();
     syncAuthorTabs();
+    autosaveSession();
   }
 
   function hideAuthorView(resumePlayback = true) {
-    stopAuthorThumbs();
+    releaseGridPreviews(authorViewEl);
     activeAuthorId = null;
     if (authorViewEl) authorViewEl.style.display = 'none';
     document.body.classList.remove('sp-author-open');
@@ -3297,14 +3438,19 @@ render();
       if (!isMobilePlayer()) showMainContent();
     }
     syncAuthorTabs();
+    autosaveSession();
   }
 
   function renderAuthorView() {
     if (!authorViewEl || !activeAuthorId) return;
     const author = openAuthors.find(a => a.id === activeAuthorId);
     const videos = authorVideos(activeAuthorId);
-    stopAuthorThumbs();
+    releaseGridPreviews(authorViewEl);
     authorViewEl.innerHTML = '';
+
+    const grid = document.createElement('div');
+    grid.id = 'author-grid';
+    grid.classList.add('preview-grid');
 
     const header = document.createElement('div');
     header.id = 'author-view-header';
@@ -3319,24 +3465,9 @@ render();
     closeBtn.textContent = '✕';
     closeBtn.title = 'Close';
     closeBtn.addEventListener('click', () => closeAuthorTab(activeAuthorId));
-    const playAll = document.createElement('button');
-    playAll.className = 'author-playall';
-    const refreshPlayAll = () => {
-      playAll.textContent = authorPlayAll ? '⏸' : '▶';
-      playAll.title = authorPlayAll ? 'Stop playing thumbnails' : 'Play all thumbnails';
-      playAll.classList.toggle('on', authorPlayAll);
-    };
-    refreshPlayAll();
-    playAll.addEventListener('click', () => {
-      authorPlayAll = !authorPlayAll;
-      refreshPlayAll();
-      authorViewEl.querySelectorAll('.author-cover').forEach(c => syncCoverPlayback(c));
-    });
-    header.append(title, count, playAll, closeBtn);
+    header.append(title, count, buildGridControls('author', grid, authorViewEl), closeBtn);
     authorViewEl.appendChild(header);
 
-    const grid = document.createElement('div');
-    grid.id = 'author-grid';
     if (!videos.length) {
       const empty = document.createElement('div');
       empty.className = 'author-empty';
@@ -3345,36 +3476,7 @@ render();
     }
     videos.forEach((v, idx) => grid.appendChild(buildAuthorCard(v, idx, videos)));
     authorViewEl.appendChild(grid);
-
-    // Only thumbnails near the viewport hold a <video>, so a long list can't exhaust memory
-    authorIO = new IntersectionObserver(entries => {
-      entries.forEach(e => { e.target._spVisible = e.isIntersecting; syncCoverPlayback(e.target); });
-    }, { root: grid, rootMargin: '200px' });
-    grid.querySelectorAll('.author-cover').forEach(c => authorIO.observe(c));
-  }
-
-  // Attach or release the preview <video> of one thumbnail
-  function syncCoverPlayback(cover) {
-    let vid = cover.querySelector('video.author-thumb-video');
-    if (authorPlayAll && cover._spVisible) {
-      if (vid) { vid.play().catch(() => {}); return; }
-      vid = document.createElement('video');
-      vid.className = 'author-thumb-video';
-      vid.src = cover.dataset.video;
-      vid.muted = true; vid.loop = true; vid.playsInline = true; vid.preload = 'auto';
-      cover.insertBefore(vid, cover.querySelector('img').nextSibling);
-      cover.classList.add('is-playing');
-      vid.play().catch(() => {});
-    } else if (vid) {
-      vid.pause(); vid.removeAttribute('src'); vid.load(); vid.remove();
-      cover.classList.remove('is-playing');
-    }
-  }
-
-  function stopAuthorThumbs() {
-    if (authorIO) { authorIO.disconnect(); authorIO = null; }
-    if (!authorViewEl) return;
-    authorViewEl.querySelectorAll('.author-cover').forEach(c => { c._spVisible = false; syncCoverPlayback(c); });
+    observeGridPreviews(grid);
   }
 
   function buildAuthorCard(v, idx, list) {
@@ -3382,8 +3484,8 @@ render();
     card.className = 'stars-grid-card';
 
     const cover = document.createElement('div');
-    cover.className = 'stars-grid-cover author-cover';
-    cover.dataset.video = v.videoPath;
+    cover.className = 'stars-grid-cover';
+    attachPreview(cover, v.videoPath);
     cover.addEventListener('click', () => openVideoOverlay(idx, list));
     const img = document.createElement('img');
     img.loading = 'lazy';
@@ -3460,6 +3562,196 @@ render();
     });
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TAB SESSIONS — open username tabs are autosaved and can be restored later
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  let tabSessions       = [];    // { id, name, createdAt, updatedAt, tabs: [{id, name}], activeId }
+  let currentSessionId  = null;  // the session open tabs are autosaved into
+  let sessionsMenuEl    = null;
+  let _sessionSyncTimer = null;
+
+  function saveSessions() {
+    try { localStorage.setItem('sp_sessions', JSON.stringify(tabSessions)); } catch (_) {}
+    clearTimeout(_sessionSyncTimer);
+    _sessionSyncTimer = setTimeout(() => {
+      fetch('/api/sessions', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessions: tabSessions }),
+      }).catch(() => { /* no server — localStorage is fine */ });
+    }, 400);
+  }
+
+  (() => {
+    try { tabSessions = JSON.parse(localStorage.getItem('sp_sessions') || '[]'); } catch (_) {}
+    if (!Array.isArray(tabSessions)) tabSessions = [];
+    fetch('/api/sessions').then(r => r.ok ? r.json() : null).then(d => {
+      if (!d || !Array.isArray(d.sessions)) return;
+      if (d.sessions.length || !tabSessions.length) {
+        const cur = tabSessions.find(x => x.id === currentSessionId);
+        tabSessions = d.sessions;
+        if (cur && !tabSessions.some(x => x.id === cur.id)) tabSessions.unshift(cur);
+        try { localStorage.setItem('sp_sessions', JSON.stringify(tabSessions)); } catch (_) {}
+      } else {
+        saveSessions();   // first run against a server: push what is stored locally
+      }
+      renderSessionsMenu();
+    }).catch(() => { /* no server */ });
+  })();
+
+  function sessionLabel(s) {
+    return s.name || s.tabs.map(t => '@' + t.name).join(', ');
+  }
+
+  // Called whenever the set of open username tabs changes
+  function autosaveSession() {
+    if (!openAuthors.length) { currentSessionId = null; return; }  // the last non-empty state stays saved
+    let s = tabSessions.find(x => x.id === currentSessionId);
+    if (!s) {
+      s = { id: uid(), name: '', createdAt: Date.now(), tabs: [], activeId: null };
+      tabSessions.unshift(s);
+      currentSessionId = s.id;
+    }
+    s.tabs = openAuthors.map(a => ({ id: a.id, name: a.name }));
+    s.activeId = activeAuthorId;
+    s.updatedAt = Date.now();
+    saveSessions();
+    renderSessionsMenu();
+  }
+
+  function restoreSession(id) {
+    const s = tabSessions.find(x => x.id === id);
+    if (!s || !s.tabs.length) return;
+    closeSessionsMenu();
+    // The author data must be loaded before a view can be rendered
+    archiveDbPromise().then(() => {
+      openAuthors.length = 0;
+      s.tabs.forEach(t => openAuthors.push({ id: t.id, name: t.name }));
+      currentSessionId = s.id;
+      const target = s.tabs.find(t => t.id === s.activeId) || s.tabs[s.tabs.length - 1];
+      syncAuthorTabs();
+      showAuthorTab(target.id, target.name);
+    }).catch(() => {});
+  }
+
+  function startNewSession() {
+    openAuthors.length = 0;
+    currentSessionId = null;
+    if (activeAuthorId) {
+      hideAuthorView();
+      if (!isMobilePlayer()) showMainContent();
+    }
+    syncAuthorTabs();
+    closeSessionsMenu();
+  }
+
+  function renameSession(id) {
+    const s = tabSessions.find(x => x.id === id);
+    if (!s) return;
+    const name = prompt('Session name (leave empty to use the usernames)', s.name || '');
+    if (name === null) return;
+    s.name = name.trim();
+    saveSessions();
+    renderSessionsMenu();
+  }
+
+  function deleteSession(id) {
+    const s = tabSessions.find(x => x.id === id);
+    if (!s || !confirm(`Delete session "${sessionLabel(s)}"?`)) return;
+    tabSessions = tabSessions.filter(x => x.id !== id);
+    if (currentSessionId === id) currentSessionId = null;
+    saveSessions();
+    renderSessionsMenu();
+  }
+
+  function renderSessionsMenu() {
+    if (!sessionsMenuEl) return;
+    sessionsMenuEl.innerHTML = '';
+
+    const head = document.createElement('div');
+    head.className = 'sessions-head';
+    const title = document.createElement('span');
+    title.textContent = 'Tab sessions';
+    const newBtn = document.createElement('button');
+    newBtn.className = 'sessions-new';
+    newBtn.textContent = '+ New';
+    newBtn.title = 'Close all username tabs and start a new session';
+    newBtn.addEventListener('click', startNewSession);
+    head.append(title, newBtn);
+    sessionsMenuEl.appendChild(head);
+
+    const list = document.createElement('div');
+    list.className = 'sessions-list';
+    const sorted = [...tabSessions].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    if (!sorted.length) {
+      const empty = document.createElement('div');
+      empty.className = 'sessions-empty';
+      empty.textContent = 'No sessions yet. Open a username tab and it is saved here automatically.';
+      list.appendChild(empty);
+    }
+    sorted.forEach(s => {
+      const isCurrent = s.id === currentSessionId;
+      const row = document.createElement('div');
+      row.className = 'sessions-row' + (isCurrent ? ' current' : '');
+      row.title = s.tabs.map(t => '@' + t.name).join('\n');
+      row.addEventListener('click', () => restoreSession(s.id));
+
+      const info = document.createElement('div');
+      info.className = 'sessions-info';
+      const label = document.createElement('div');
+      label.className = 'sessions-label';
+      label.textContent = sessionLabel(s);
+      const when = new Date(s.updatedAt || s.createdAt || Date.now())
+        .toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+      const meta = document.createElement('div');
+      meta.className = 'sessions-meta';
+      meta.textContent = `${s.tabs.length} tab${s.tabs.length !== 1 ? 's' : ''} · ${when}${isCurrent ? ' · open now' : ''}`;
+      info.append(label, meta);
+
+      const mk = (text, title, fn) => {
+        const b = document.createElement('button');
+        b.className = 'sessions-act';
+        b.textContent = text;
+        b.title = title;
+        b.addEventListener('click', e => { e.stopPropagation(); fn(); });
+        return b;
+      };
+      row.append(info, mk('✎', 'Rename', () => renameSession(s.id)), mk('✕', 'Delete', () => deleteSession(s.id)));
+      list.appendChild(row);
+    });
+    sessionsMenuEl.appendChild(list);
+  }
+
+  const sessionsOutside = e => {
+    if (sessionsMenuEl && !sessionsMenuEl.contains(e.target) && !e.target.closest('.session-tab')) closeSessionsMenu();
+  };
+  const sessionsEscape = e => { if (e.key === 'Escape') closeSessionsMenu(); };
+
+  function closeSessionsMenu() {
+    if (!sessionsMenuEl) return;
+    sessionsMenuEl.remove();
+    sessionsMenuEl = null;
+    document.removeEventListener('mousedown', sessionsOutside, true);
+    document.removeEventListener('keydown', sessionsEscape, true);
+    document.querySelector('nav .session-tab')?.classList.remove('menu-open');
+  }
+
+  function toggleSessionsMenu() {
+    if (sessionsMenuEl) { closeSessionsMenu(); return; }
+    const btn = document.querySelector('nav .session-tab');
+    if (!btn) return;
+    sessionsMenuEl = document.createElement('div');
+    sessionsMenuEl.id = 'sessions-menu';
+    document.body.appendChild(sessionsMenuEl);
+    renderSessionsMenu();
+    const r = btn.getBoundingClientRect();
+    sessionsMenuEl.style.top = (r.bottom + 6) + 'px';
+    sessionsMenuEl.style.right = Math.max(8, window.innerWidth - r.right - 4) + 'px';
+    btn.classList.add('menu-open');
+    document.addEventListener('mousedown', sessionsOutside, true);
+    document.addEventListener('keydown', sessionsEscape, true);
+  }
+
   function makeNavTab(className, svgPath, label, onClick) {
     const tab = document.createElement('div');
     tab.className = className + ' pressable';
@@ -3511,6 +3803,20 @@ render();
         // A button, not a page tab: without .pressable the nav click handler leaves the current view alone
         tab.classList.remove('pressable');
         starsTab.insertAdjacentElement('afterend', tab);
+      }
+    }
+
+    // Sessions button — next to Player
+    if (!nav.querySelector('.session-tab')) {
+      const playerTab = nav.querySelector('.player-tab');
+      if (playerTab) {
+        const tab = makeNavTab('session-tab',
+          '<path d="M21 3H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H3V5h10v4h8v10z"/>',
+          'Tab sessions',
+          toggleSessionsMenu
+        );
+        tab.classList.remove('pressable');
+        playerTab.insertAdjacentElement('afterend', tab);
       }
     }
 
@@ -3632,7 +3938,7 @@ render();
       .star-panel-desc   { font-size:11px; color:#777; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
       /* ── Stars & Player nav tabs ── */
-      nav .stars-tab, nav .player-tab {
+      nav .stars-tab, nav .player-tab, nav .session-tab {
         display: flex; align-items: center;
         cursor: pointer; border-bottom: 3px solid transparent; color: inherit;
         white-space: nowrap;
@@ -3641,23 +3947,23 @@ render();
       /* ── Icon-only top nav (labels hidden; title tooltips added in JS) ── */
       nav { margin-left: 20px !important; }
       nav .likes, nav .bookmarked, nav .following, nav .readme,
-      nav .stars-tab, nav .player-tab {
+      nav .stars-tab, nav .player-tab, nav .session-tab {
         font-size: 0 !important; gap: 0 !important;
         margin: 3.3px 2px 0 !important; padding: 0 14px !important;
         justify-content: center; border-radius: 6px 6px 0 0;
         transition: color .15s, background .15s;
       }
       nav .likes svg, nav .bookmarked svg, nav .following svg, nav .readme svg,
-      nav .stars-tab svg, nav .player-tab svg {
+      nav .stars-tab svg, nav .player-tab svg, nav .session-tab svg {
         width: 20px !important; height: 20px !important; margin: 0 !important;
       }
       nav .likes:not(.active):hover, nav .bookmarked:not(.active):hover,
       nav .following:not(.active):hover, nav .readme:not(.active):hover,
-      nav .stars-tab:not(.active):hover, nav .player-tab:not(.active):hover {
+      nav .stars-tab:not(.active):hover, nav .player-tab:not(.active):hover, nav .session-tab:not(.menu-open):hover {
         color: var(--active, #d7d7d7); background: rgba(255,255,255,.05);
       }
       nav .likes.active, nav .bookmarked.active, nav .following.active, nav .readme.active,
-      nav .stars-tab.active, nav .player-tab.active {
+      nav .stars-tab.active, nav .player-tab.active, nav .session-tab.menu-open {
         color: var(--active, #d7d7d7); background: rgba(255,255,255,.09);
         border-bottom: 3px solid var(--active, #d7d7d7); cursor: default;
       }
@@ -3688,25 +3994,48 @@ render();
       @media (min-width: 769px) {
         header:has(> nav) {
           position: relative;
-          padding-right: calc(var(--left-padding, 20px) + 112px) !important;
+          padding-right: calc(var(--left-padding, 20px) + 168px) !important;
         }
         header:has(> nav) nav .readme,
-        header:has(> nav) nav .player-tab {
+        header:has(> nav) nav .player-tab,
+        header:has(> nav) nav .session-tab {
           position: absolute !important; z-index: 2; top: 3.3px !important; bottom: 0; margin: 0 !important;
           box-sizing: border-box; width: 52px; padding: 0 !important;
         }
         header:has(> nav) nav .readme     { right: var(--left-padding, 20px); }
-        header:has(> nav) nav .player-tab { right: calc(var(--left-padding, 20px) + 56px); }
+        header:has(> nav) nav .player-tab  { right: calc(var(--left-padding, 20px) + 56px); }
+        header:has(> nav) nav .session-tab { right: calc(var(--left-padding, 20px) + 112px); }
       }
 
+      #sessions-menu {
+        position: fixed; z-index: 10000; width: 300px; max-height: 70vh;
+        display: flex; flex-direction: column; overflow: hidden;
+        background: #1e1e1e; border: 1px solid #444; border-radius: 8px;
+        box-shadow: 0 8px 28px rgba(0,0,0,.6); color: #ddd; font-size: 13px;
+      }
+      .sessions-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid #333; font-weight: 600; }
+      .sessions-new { background: rgba(255,255,255,.08); border: 1px solid #444; color: #ccc; border-radius: 12px; padding: 2px 10px; font-size: 12px; cursor: pointer; }
+      .sessions-new:hover { background: rgba(255,255,255,.16); color: #fff; }
+      .sessions-list { overflow-y: auto; padding: 4px 0; }
+      .sessions-empty { padding: 14px 12px; color: #888; line-height: 1.4; }
+      .sessions-row { display: flex; align-items: center; gap: 6px; padding: 7px 12px; cursor: pointer; }
+      .sessions-row:hover { background: #2a2a2a; }
+      .sessions-row.current { background: #262626; box-shadow: inset 3px 0 0 var(--active, #d7d7d7); }
+      .sessions-info { flex: 1; min-width: 0; }
+      .sessions-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .sessions-meta { font-size: 11px; color: #888; margin-top: 2px; }
+      .sessions-act { background: none; border: none; color: #888; cursor: pointer; font-size: 13px; padding: 2px 5px; border-radius: 4px; }
+      .sessions-act:hover { color: #fff; background: rgba(255,255,255,.12); }
       .sp-author-link { cursor: pointer; pointer-events: auto !important; }
       .sp-author-link:hover { color: #fff; text-decoration: underline; }
       #author-view { display: none; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
       #author-view-header { display: flex; align-items: baseline; gap: 10px; padding: 14px 18px 10px; flex-shrink: 0; border-bottom: 1px solid #333; }
-      .author-playall { align-self: center; background: rgba(255,255,255,.08); border: 1px solid #444; color: #ccc; border-radius: 12px; padding: 1px 10px; font-size: 12px; line-height: 18px; cursor: pointer; }
-      .author-playall:hover { background: rgba(255,255,255,.16); color: #fff; }
-      .author-playall.on { background: rgba(255,255,255,.2); border-color: #888; color: #fff; }
-      .author-thumb-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+      .grid-controls { display: flex; align-items: center; gap: 8px; align-self: center; }
+      .grid-playall { background: rgba(255,255,255,.08); border: 1px solid #444; color: #ccc; border-radius: 12px; padding: 1px 10px; font-size: 12px; line-height: 18px; cursor: pointer; }
+      .grid-playall:hover { background: rgba(255,255,255,.16); color: #fff; }
+      .grid-playall.on { background: rgba(255,255,255,.2); border-color: #888; color: #fff; }
+      .grid-size { width: 110px; height: 16px; margin: 0; accent-color: #aaa; cursor: pointer; }
+      .preview-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
       .stars-grid-cover.is-playing::after { display: none; }
       .author-view-close { display: none; margin-left: auto; background: none; border: none; color: #ccc; font-size: 18px; cursor: pointer; padding: 0 4px; }
       #author-grid { flex: 1; overflow-y: auto; padding: 14px 18px; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; align-content: start; }
@@ -4064,6 +4393,8 @@ render();
           white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }
         #stars-mobile-title .stars-main-count { font-size: 12px; color: #666; flex-shrink: 0; }
+        #stars-mobile-header .grid-controls { pointer-events: auto; flex-shrink: 0; }
+        .grid-size { width: 84px; }
 
         /* ── Filter buttons: fixed bottom-right stack (like player controls) ── */
         #stars-mobile-filters {

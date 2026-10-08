@@ -65,6 +65,33 @@ http.createServer((req, res) => {
     res.writeHead(405); res.end('Method not allowed'); return;
   }
 
+  // ── Tab sessions API ───────────────────────────────────────────────────────
+  if (pathname === '/api/sessions') {
+    if (req.method === 'GET') {
+      const body = JSON.stringify({ sessions: dbStars.loadSessions() });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) });
+      res.end(body);
+      return;
+    }
+    if (req.method === 'PUT') {
+      let chunks = [];
+      req.on('data', c => chunks.push(c));
+      req.on('end', () => {
+        try {
+          const data = JSON.parse(Buffer.concat(chunks).toString());
+          dbStars.saveSessions(Array.isArray(data.sessions) ? data.sessions : []);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end('{"ok":true}');
+        } catch (e) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end('{"error":"Invalid JSON"}');
+        }
+      });
+      return;
+    }
+    res.writeHead(405); res.end('Method not allowed'); return;
+  }
+
   const isRoot   = pathname === '/' || pathname === '/Archive.html';
 
   const filePath = isRoot
