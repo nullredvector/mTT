@@ -3656,7 +3656,7 @@ render();
       #author-view { display: none; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
       #author-view-header { display: flex; align-items: baseline; gap: 10px; padding: 14px 18px 10px; flex-shrink: 0; border-bottom: 1px solid #333; }
       .author-view-close { display: none; margin-left: auto; background: none; border: none; color: #ccc; font-size: 18px; cursor: pointer; padding: 0 4px; }
-      #author-grid { flex: 1; overflow-y: auto; padding: 14px 18px; display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 14px; align-content: start; }
+      #author-grid { flex: 1; overflow-y: auto; padding: 14px 18px; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; align-content: start; }
       .author-empty { color: #777; font-size: 14px; grid-column: 1 / -1; }
       #author-view .stars-grid-remove, #author-view .stars-grid-add-group { opacity: 1; }
       .author-star-btn { font-size: 13px !important; }
@@ -3664,7 +3664,7 @@ render();
       @media (max-width: 768px) {
         #author-view { position: fixed; inset: 0; bottom: calc(72px + env(safe-area-inset-bottom, 0px)); z-index: 3500; background: #0d0d0d; }
         .author-view-close { display: block; }
-        #author-grid { grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 8px; }
+        #author-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; padding: 8px; }
       }
 
       /* ── Stars view ── */
