@@ -2260,30 +2260,60 @@
   }
 
   async function openPlayer() {
+    if (!isMobilePlayer()) { launchPlayerWindow(); return; }
     if (starsTabActive) showMainContent();
 
-    if (isMobilePlayer()) {
-      // Mobile: show loading screen, build list, then scroll-snap feed
-      playerOpen = true;
-      activeMobileTab = 'home'; updateMobileNavActive();
-      showMobilePlayerLoading();
-      playerVideoList = await buildVideoList();
-      if (!playerOpen) { hideMobilePlayerView(); return; }
-      // If a specific video was requested (e.g. tapped from recents grid), put it first
-      if (playerStartId) {
-        const si = playerVideoList.findIndex(v => v.id === playerStartId);
-        if (si > 0) { const [it] = playerVideoList.splice(si, 1); playerVideoList.unshift(it); }
-        playerStartId = null;
-      }
-      playerColumnOffsets = [0];
-      renderMobilePlayerContent();
-    } else {
-      // Desktop: build list and open a new pop-out window each time
-      playerVideoList = await buildVideoList();
-      if (playerVideoList.length > 0) {
-        popoutPlayer(playerVideoList, 0);
-      }
+    // Mobile: show loading screen, build list, then scroll-snap feed
+    playerOpen = true;
+    activeMobileTab = 'home'; updateMobileNavActive();
+    showMobilePlayerLoading();
+    playerVideoList = await buildVideoList();
+    if (!playerOpen) { hideMobilePlayerView(); return; }
+    // If a specific video was requested (e.g. tapped from recents grid), put it first
+    if (playerStartId) {
+      const si = playerVideoList.findIndex(v => v.id === playerStartId);
+      if (si > 0) { const [it] = playerVideoList.splice(si, 1); playerVideoList.unshift(it); }
+      playerStartId = null;
     }
+    playerColumnOffsets = [0];
+    renderMobilePlayerContent();
+  }
+
+  // Desktop: open a new pop-out player window without touching the current tab.
+  // The list comes from the archive db, so no React tabs need to be clicked.
+  async function launchPlayerWindow() {
+    let list = [];
+    try { list = await buildVideoListFromDb(); } catch (e) { console.warn('[Player] db list failed', e); }
+    if (!list.length) list = await buildVideoList();   // fallback: scrapes the tabs
+    if (list.length) popoutPlayer(list, 0);
+  }
+
+  async function buildVideoListFromDb() {
+    const d = await archiveDbPromise();
+    const list = [];
+    const seen = new Set();
+    const add = (ids, dir) => {
+      for (const id of ids) {
+        const v = d.videos[id];
+        if (!v || seen.has(id)) continue;
+        seen.add(id);
+        const a = d.authors[v.authorId];
+        list.push({
+          id, authorName: (a && a.uniqueIds && a.uniqueIds[0]) || '', desc: d.videoDescriptions[id] || '',
+          videoPath: `data/${dir}/videos/${id}.mp4`, coverSrc: `data/${dir}/covers/${id}.jpg`,
+        });
+        seen.add(id);
+      }
+    };
+    const dl = new Set((d.likes && d.likes.downloaded) || []);
+    add(((d.likes && d.likes.officialList) || []).filter(id => dl.has(id)), 'Likes');
+    const bm = new Set((d.bookmarked && d.bookmarked.downloaded) || []);
+    add(((d.bookmarked && d.bookmarked.officialList) || []).filter(id => bm.has(id)), 'Favorites');
+    for (let i = list.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [list[i], list[j]] = [list[j], list[i]];
+    }
+    return list;
   }
 
   function closePlayer() {
@@ -3410,16 +3440,17 @@ render();
       if (starsTab) {
         const tab = makeNavTab('player-tab',
           '<path d="M8 5v14l11-7z"/>',
-          'Player',
+          'Open player in a new window',
           () => {
             if (isMobilePlayer()) {
               if (!playerOpen) openPlayer(); else closePlayer();
             } else {
-              openPlayer(); // always launches a new pop-out on desktop
+              launchPlayerWindow();
             }
           }
         );
-        if (playerOpen) tab.classList.add('active');
+        // A button, not a page tab: without .pressable the nav click handler leaves the current view alone
+        tab.classList.remove('pressable');
         starsTab.insertAdjacentElement('afterend', tab);
       }
     }
@@ -3470,6 +3501,7 @@ render();
       if (nav) new MutationObserver(injectNavTabs).observe(nav, { childList: true });
       injectNavTabs();
       watchNavClicks();
+      ensureArchiveDb();
     }
   }
 
