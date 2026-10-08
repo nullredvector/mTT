@@ -1775,7 +1775,7 @@
     cover.appendChild(img);
 
     const rmBtn = document.createElement('button');
-    rmBtn.className = 'stars-grid-remove';
+    rmBtn.className = 'stars-grid-remove stars-grid-x';
     const isGlobalView = activeView === null && activeGroupIds.size === 0;
     const isInGroup    = activeView === null && activeGroupIds.size > 0;
     rmBtn.title = onRemoveOverride ? 'Remove level'
@@ -4165,7 +4165,7 @@ render();
       .author-empty { color: #777; font-size: 14px; grid-column: 1 / -1; }
       #author-view .stars-grid-remove, #author-view .stars-grid-add-group { opacity: 1; }
       .thumb-tools {
-        position: absolute; right: 6px; top: 50%; transform: translateY(-50%); z-index: 4;
+        position: absolute; right: 6px; top: 6px; z-index: 4;
         display: flex; flex-direction: column; align-items: center;
         gap: calc(var(--tool, 28px) * 0.25);
       }
@@ -4178,6 +4178,7 @@ render();
         transition: opacity .1s, background .1s, color .1s;
       }
       .thumb-tool svg { width: 62%; height: 62%; }
+      .stars-grid-remove.stars-grid-x { right: auto; left: 4px; }
       .stars-grid-cover:hover .thumb-tool, .thumb-tool.on, .thumb-tool.braces-on { opacity: 1; }
       .thumb-tool:hover { background: rgba(0,0,0,.9); color: #fff; }
       .thumb-star.on { color: gold; }
