@@ -215,37 +215,62 @@
   let _dbCache = null, _dbLoading = false, _dbFailed = false, _fiberFailAt = 0;
 
   async function loadArchiveDb() {
-    const files = { videos: 'db_videos.js', authors: 'db_authors.js', videoDescriptions: 'db_texts.js' };
+    // required: needed for names/descriptions; optional: only used to locate an author's files
+    const files = [
+      ['videos', 'db_videos.js', true], ['authors', 'db_authors.js', true],
+      ['videoDescriptions', 'db_texts.js', true],
+      ['likes', 'db_likes.js', false], ['bookmarked', 'db_bookmarked.js', false],
+      ['following', 'db_following.js', false],
+    ];
     const out = {};
-    for (const [key, file] of Object.entries(files)) {
-      const text = await (await fetch('data/.appdata/' + file)).text();
-      const b64 = text.match(/_base64\s*=\s*"([^"]+)"/);
-      let json;
-      if (b64) {
-        const bin = Uint8Array.from(atob(b64[1]), c => c.charCodeAt(0));
-        const stream = new Blob([bin]).stream().pipeThrough(new DecompressionStream('gzip'));
-        json = await new Response(stream).text();
-      } else {
-        const raw = text.match(/String\.raw`([\s\S]*)`/);
-        if (!raw) throw new Error('unrecognised format: ' + file);
-        json = raw[1].replace(/背𓄹剃/g, '`').replace(/⑀⦃/g, '${');
+    for (const [key, file, required] of files) {
+      try {
+        out[key] = await readDbFile(file);
+      } catch (e) {
+        if (required) throw e;
+        console.warn('[starplayer] optional db file unavailable:', file, e);
       }
-      out[key] = JSON.parse(json);
     }
+    if (out.likes && out.likes.likes) out.likes = out.likes.likes;
     return out;
+  }
+
+  async function readDbFile(file) {
+    const text = await (await fetch('data/.appdata/' + file)).text();
+    const b64 = text.match(/_base64\s*=\s*"([^"]+)"/);
+    let json;
+    if (b64) {
+      const bin = Uint8Array.from(atob(b64[1]), c => c.charCodeAt(0));
+      const stream = new Blob([bin]).stream().pipeThrough(new DecompressionStream('gzip'));
+      json = await new Response(stream).text();
+    } else {
+      const raw = text.match(/String\.raw`([\s\S]*)`/);
+      if (!raw) throw new Error('unrecognised format: ' + file);
+      json = raw[1].replace(/背𓄹剃/g, '`').replace(/⑀⦃/g, '${');
+    }
+    return JSON.parse(json);
+  }
+
+  let _dbPromise = null;
+  function archiveDbPromise() {
+    if (!_dbPromise) {
+      _dbLoading = true;
+      _dbPromise = loadArchiveDb()
+        .then(d => {
+          _dbCache = d;
+          if (starsTabActive) renderStarsView();
+          if (panelOpen) renderPanel();
+          return d;
+        })
+        .catch(e => { _dbFailed = true; console.warn('[starplayer] archive db load failed', e); throw e; })
+        .finally(() => { _dbLoading = false; });
+    }
+    return _dbPromise;
   }
 
   function ensureArchiveDb() {
     if (_dbCache || _dbLoading || _dbFailed) return;
-    _dbLoading = true;
-    loadArchiveDb()
-      .then(d => {
-        _dbCache = d;
-        if (starsTabActive) renderStarsView();
-        if (panelOpen) renderPanel();
-      })
-      .catch(e => { _dbFailed = true; console.warn('[starplayer] archive db load failed', e); })
-      .finally(() => { _dbLoading = false; });
+    archiveDbPromise().catch(() => {});
   }
 
   function getVideoInfo(videoId) {
@@ -262,6 +287,40 @@
     const a    = v && data.authors && data.authors[v.authorId];
     const authorName = (a && a.uniqueIds && a.uniqueIds[0]) || '';
     return { desc, authorName };
+  }
+
+  // Resolve a username to its author id (authors can have several past usernames)
+  function authorIdForName(name) {
+    const d = _dbCache;
+    if (!d || !name) return null;
+    const n = String(name).toLowerCase();
+    for (const [id, a] of Object.entries(d.authors)) {
+      if ((a.uniqueIds || []).some(u => String(u).toLowerCase() === n)) return id;
+    }
+    return null;
+  }
+
+  // Every downloaded video by this author, newest first, with the folder it lives in
+  function authorVideos(authorId) {
+    const d = _dbCache;
+    if (!d) return [];
+    const likes = new Set((d.likes && d.likes.downloaded) || []);
+    const marks = new Set((d.bookmarked && d.bookmarked.downloaded) || []);
+    const fi    = d.following && d.following.authorItems && d.following.authorItems[authorId];
+    const fol   = new Set([...((fi && fi.inFolder) || []), ...((fi && fi.disappeared) || [])]);
+    const a     = d.authors[authorId];
+    const name  = (a && a.uniqueIds && a.uniqueIds[0]) || '';
+    const out = [];
+    for (const [id, v] of Object.entries(d.videos)) {
+      if (v.authorId !== authorId) continue;
+      const dir = likes.has(id) ? 'Likes' : marks.has(id) ? 'Favorites' : fol.has(id) ? `Following/${authorId}` : null;
+      if (!dir) continue;
+      out.push({
+        id, authorName: name, desc: d.videoDescriptions[id] || '', createTime: v.createTime || 0,
+        coverSrc: `data/${dir}/covers/${id}.jpg`, videoPath: `data/${dir}/videos/${id}.mp4`,
+      });
+    }
+    return out.sort((x, y) => y.createTime - x.createTime);
   }
 
   function tabForCover(coverSrc) {
@@ -612,7 +671,9 @@
   function openVideoOverlay(startIdx, contextList) {
     // On mobile route to the scroll-snap feed instead of the small overlay
     if (isMobilePlayer()) {
-      playerReturnTab = activeMobileTab === 'stars' ? 'stars'
+      const fromAuthor = authorViewOpen();
+      playerReturnTab = fromAuthor ? '__author__'
+                     : activeMobileTab === 'stars' ? 'stars'
                      : activeMobileTab === 'recents' ? 'recents'
                      : null;
       playerOpen = true;
@@ -625,6 +686,7 @@
         document.body.appendChild(playerViewEl);
       }
       playerViewEl.style.display = 'flex';
+      playerViewEl.style.zIndex = fromAuthor ? '3600' : '';
       renderMobilePlayerContent();
       return;
     }
@@ -774,7 +836,7 @@
     if (authorName) {
       const authEl = document.createElement('div');
       authEl.className = 'overlay-author';
-      authEl.textContent = '@' + authorName;
+      setAuthorLink(authEl, authorName);
       meta.appendChild(authEl);
     }
     if (desc) {
@@ -895,7 +957,7 @@
         if (authorName) {
           const a = document.createElement('div');
           a.className = 'star-panel-author';
-          a.textContent = '@' + authorName;
+          setAuthorLink(a, authorName);
           item.appendChild(a);
         }
         if (desc) {
@@ -957,6 +1019,7 @@
   let starsContextList = [];        // mirrors the currently rendered video grid order
 
   function showStarsTab() {
+    if (activeAuthorId) hideAuthorView();
     starsTabActive = true;
     if (!isMobilePlayer()) closePlayer();
     document.querySelector('main')?.style.setProperty('display', 'none');
@@ -980,6 +1043,7 @@
   }
 
   function showMainContent() {
+    if (activeAuthorId) hideAuthorView();
     starsTabActive = false;
     document.querySelector('main')?.style.removeProperty('display');
     toggleBtn.style.display = '';
@@ -1497,7 +1561,7 @@
     if (authorName) {
       const a = document.createElement('div');
       a.className = 'stars-grid-author';
-      a.textContent = '@' + authorName;
+      setAuthorLink(a, authorName);
       card.appendChild(a);
     }
     if (desc) {
@@ -1712,6 +1776,7 @@
   }
 
   function setMobileTab(tab, skipAnim) {
+    if (activeAuthorId) hideAuthorView(false);
     const oldIdx = MOBILE_TABS.indexOf(activeMobileTab);
     const newIdx = MOBILE_TABS.indexOf(tab);
     activeMobileTab = tab;
@@ -2253,6 +2318,7 @@
     // Pause any playing videos before hiding
     playerViewEl.querySelectorAll('video').forEach(v => v.pause());
     playerViewEl.style.display = 'none';
+    playerViewEl.style.zIndex = '';
     playerViewEl.innerHTML = '';
   }
 
@@ -2607,7 +2673,7 @@
       closeBtn.addEventListener('click', e => {
         e.stopPropagation();
         closePlayer();
-        setMobileTab(playerReturnTab);
+        if (playerReturnTab !== '__author__') setMobileTab(playerReturnTab);
         playerReturnTab = null;
       });
       ctrlLayer.appendChild(closeBtn);
@@ -2633,7 +2699,7 @@
       const info    = getVideoInfo(item.id);
       const name    = info.authorName || item.authorName || '';
       const caption = info.desc || '';
-      authorEl.textContent  = name ? '@' + name : '';
+      if (name) setAuthorLink(authorEl, name); else clearAuthorLink(authorEl);
       captionEl.textContent = caption.length > 120 ? caption.slice(0, 120) + '…' : caption;
     }
     // ── End fixed controls layer ─────────────────────────────────────────────
@@ -3101,6 +3167,206 @@ render();
   // NAV INJECTION
   // ═══════════════════════════════════════════════════════════════════════════
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // AUTHOR TABS — click a username to see all of that author's videos
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  let authorViewEl   = null;
+  let activeAuthorId = null;
+  const openAuthors  = [];   // { id, name }, in nav-tab order
+
+  function setAuthorLink(el, name) {
+    el.textContent = '@' + name;
+    el.classList.add('sp-author-link');
+    el.title = 'All videos by @' + name;
+    el.onclick = e => { e.stopPropagation(); openAuthorByName(name); };
+  }
+
+  function clearAuthorLink(el) {
+    el.textContent = '';
+    el.classList.remove('sp-author-link');
+    el.onclick = null;
+  }
+
+  function openAuthorByName(name) {
+    if (!_dbCache) {
+      archiveDbPromise().then(() => openAuthorByName(name)).catch(() => {});
+      return;
+    }
+    const id = authorIdForName(name);
+    if (id) showAuthorTab(id, name);
+  }
+
+  function authorViewOpen() {
+    return Boolean(activeAuthorId && authorViewEl && authorViewEl.style.display !== 'none');
+  }
+
+  function showAuthorTab(id, name) {
+    if (!openAuthors.some(a => a.id === id)) openAuthors.push({ id, name });
+    activeAuthorId = id;
+    closeVideoOverlay();
+    closePanel();
+    document.body.classList.add('sp-author-open');
+
+    const main = document.querySelector('main');
+    if (isMobilePlayer()) {
+      // Mobile: the view overlays whatever is underneath. A player launched from an
+      // author view sits above it, so close that one; otherwise just silence the feed.
+      if (playerReturnTab === '__author__') { closePlayer(); playerReturnTab = null; }
+      document.querySelectorAll('#player-view video').forEach(v => v.pause());
+    } else {
+      if (starsTabActive) {
+        starsTabActive = false;
+        if (starsViewEl) starsViewEl.style.display = 'none';
+        document.querySelector('nav .stars-tab')?.classList.remove('active');
+      }
+      main?.style.setProperty('display', 'none');
+      toggleBtn.style.display = 'none';
+    }
+
+    if (!authorViewEl) {
+      authorViewEl = document.createElement('div');
+      authorViewEl.id = 'author-view';
+      if (main) main.parentNode.insertBefore(authorViewEl, main);
+      else document.body.appendChild(authorViewEl);
+    }
+    authorViewEl.style.display = 'flex';
+    renderAuthorView();
+    syncAuthorTabs();
+  }
+
+  function hideAuthorView(resumePlayback = true) {
+    activeAuthorId = null;
+    if (authorViewEl) authorViewEl.style.display = 'none';
+    document.body.classList.remove('sp-author-open');
+    syncAuthorTabs();
+    if (resumePlayback && isMobilePlayer() && playerOpen && playerViewEl && playerViewEl.style.display !== 'none') {
+      playerViewEl.querySelectorAll('video')[playerColumnOffsets[0] || 0]?.play().catch(() => {});
+    }
+  }
+
+  function closeAuthorTab(id) {
+    const i = openAuthors.findIndex(a => a.id === id);
+    if (i >= 0) openAuthors.splice(i, 1);
+    if (activeAuthorId === id) {
+      hideAuthorView();
+      if (!isMobilePlayer()) showMainContent();
+    }
+    syncAuthorTabs();
+  }
+
+  function renderAuthorView() {
+    if (!authorViewEl || !activeAuthorId) return;
+    const author = openAuthors.find(a => a.id === activeAuthorId);
+    const videos = authorVideos(activeAuthorId);
+    authorViewEl.innerHTML = '';
+
+    const header = document.createElement('div');
+    header.id = 'author-view-header';
+    const title = document.createElement('span');
+    title.className = 'stars-main-title';
+    title.textContent = '@' + author.name;
+    const count = document.createElement('span');
+    count.className = 'stars-main-count';
+    count.textContent = `${videos.length} video${videos.length !== 1 ? 's' : ''}`;
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'author-view-close';
+    closeBtn.textContent = '✕';
+    closeBtn.title = 'Close';
+    closeBtn.addEventListener('click', () => closeAuthorTab(activeAuthorId));
+    header.append(title, count, closeBtn);
+    authorViewEl.appendChild(header);
+
+    const grid = document.createElement('div');
+    grid.id = 'author-grid';
+    if (!videos.length) {
+      const empty = document.createElement('div');
+      empty.className = 'author-empty';
+      empty.textContent = 'No downloaded videos found for this author.';
+      grid.appendChild(empty);
+    }
+    videos.forEach((v, idx) => grid.appendChild(buildAuthorCard(v, idx, videos)));
+    authorViewEl.appendChild(grid);
+  }
+
+  function buildAuthorCard(v, idx, list) {
+    const card = document.createElement('div');
+    card.className = 'stars-grid-card';
+
+    const cover = document.createElement('div');
+    cover.className = 'stars-grid-cover';
+    cover.addEventListener('click', () => openVideoOverlay(idx, list));
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    img.src = v.coverSrc;
+    img.onerror = () => { img.style.display = 'none'; };
+    cover.appendChild(img);
+
+    const starBtn = document.createElement('button');
+    starBtn.className = 'stars-grid-remove author-star-btn';
+    const refreshStar = () => {
+      const on = Boolean(stars[v.id]);
+      starBtn.textContent = on ? '★' : '☆';
+      starBtn.title = on ? 'Remove from Stars' : 'Add to Stars';
+      starBtn.classList.toggle('author-star-active', on);
+    };
+    refreshStar();
+    starBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      toggleStar(v.id, v.coverSrc, v.authorName, v.desc);
+      refreshStar();
+    });
+    cover.appendChild(starBtn);
+
+    const grpBtn = document.createElement('button');
+    grpBtn.className = 'stars-grid-add-group';
+    grpBtn.textContent = '⊕';
+    grpBtn.title = 'Add to group';
+    grpBtn.addEventListener('click', e => { e.stopPropagation(); showGroupPicker(grpBtn, v.id); });
+    cover.appendChild(grpBtn);
+    card.appendChild(cover);
+
+    if (v.desc) {
+      const d = document.createElement('div');
+      d.className = 'stars-grid-desc';
+      d.textContent = v.desc.length > 80 ? v.desc.slice(0, 80) + '…' : v.desc;
+      card.appendChild(d);
+    }
+    return card;
+  }
+
+  // Keep the nav's author tabs in sync with openAuthors (React may rebuild the nav)
+  function syncAuthorTabs() {
+    const nav = document.querySelector('nav');
+    if (!nav) return;
+    nav.querySelectorAll('.author-tab').forEach(t => {
+      if (!openAuthors.some(a => a.id === t.dataset.id)) t.remove();
+    });
+    openAuthors.forEach(a => {
+      let tab = nav.querySelector(`.author-tab[data-id="${a.id}"]`);
+      if (!tab) {
+        tab = document.createElement('div');
+        tab.className = 'author-tab pressable';
+        tab.dataset.id = a.id;
+        tab.title = '@' + a.name;
+        const label = document.createElement('span');
+        label.className = 'author-tab-label';
+        label.textContent = '@' + a.name;
+        const x = document.createElement('span');
+        x.className = 'author-tab-close';
+        x.textContent = '✕';
+        x.title = 'Close tab';
+        x.addEventListener('click', e => { e.stopPropagation(); closeAuthorTab(a.id); });
+        tab.append(label, x);
+        tab.addEventListener('click', () => { if (activeAuthorId !== a.id) showAuthorTab(a.id, a.name); });
+        const last = [...nav.querySelectorAll('.author-tab')].pop()
+          || nav.querySelector('.player-tab') || nav.querySelector('.stars-tab');
+        last?.insertAdjacentElement('afterend', tab);
+      }
+      tab.classList.toggle('active', a.id === activeAuthorId);
+    });
+  }
+
   function makeNavTab(className, svgPath, label, onClick) {
     const tab = document.createElement('div');
     tab.className = className + ' pressable';
@@ -3153,6 +3419,8 @@ render();
         starsTab.insertAdjacentElement('afterend', tab);
       }
     }
+
+    syncAuthorTabs();
   }
 
   function watchNavClicks() {
@@ -3161,7 +3429,8 @@ render();
     nav.addEventListener('click', e => {
       const tab = e.target.closest('.pressable');
       if (!tab || playerBuilding) return; // ignore clicks while collecting video IDs
-      if (!tab.classList.contains('stars-tab') && starsTabActive) showMainContent();
+      const isOwnTab = tab.classList.contains('stars-tab') || tab.classList.contains('author-tab');
+      if (!isOwnTab && (starsTabActive || activeAuthorId)) showMainContent();
       if (!tab.classList.contains('player-tab') && playerOpen && isMobilePlayer()) closePlayer();
     });
   }
@@ -3296,6 +3565,42 @@ render();
       nav .stars-tab.active, nav .player-tab.active {
         color: var(--active, #d7d7d7); background: rgba(255,255,255,.09);
         border-bottom: 3px solid var(--active, #d7d7d7); cursor: default;
+      }
+
+      /* ── Author tabs + view ── */
+      nav .author-tab {
+        display: flex; align-items: center; gap: 6px;
+        margin: 3.3px 2px 0; padding: 0 8px 0 12px; max-width: 160px;
+        font-size: 13px; cursor: pointer; color: inherit;
+        border-bottom: 3px solid transparent; border-radius: 6px 6px 0 0;
+        transition: color .15s, background .15s;
+      }
+      nav .author-tab-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      nav .author-tab-close { font-size: 10px; line-height: 1; padding: 3px 5px; border-radius: 50%; opacity: .55; flex-shrink: 0; }
+      nav .author-tab-close:hover { opacity: 1; background: rgba(255,255,255,.15); }
+      nav .author-tab:not(.active):hover { color: var(--active, #d7d7d7); background: rgba(255,255,255,.05); }
+      nav .author-tab.active {
+        color: var(--active, #d7d7d7); background: rgba(255,255,255,.09);
+        border-bottom: 3px solid var(--active, #d7d7d7); cursor: default;
+      }
+      body.sp-author-open nav .pressable.active:not(.author-tab) {
+        color: var(--inactive, rgb(160,160,160)) !important;
+        background: none !important; border-bottom-color: transparent !important;
+      }
+      .sp-author-link { cursor: pointer; pointer-events: auto !important; }
+      .sp-author-link:hover { color: #fff; text-decoration: underline; }
+      #author-view { display: none; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+      #author-view-header { display: flex; align-items: baseline; gap: 10px; padding: 14px 18px 10px; flex-shrink: 0; border-bottom: 1px solid #333; }
+      .author-view-close { display: none; margin-left: auto; background: none; border: none; color: #ccc; font-size: 18px; cursor: pointer; padding: 0 4px; }
+      #author-grid { flex: 1; overflow-y: auto; padding: 14px 18px; display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 14px; align-content: start; }
+      .author-empty { color: #777; font-size: 14px; grid-column: 1 / -1; }
+      #author-view .stars-grid-remove, #author-view .stars-grid-add-group { opacity: 1; }
+      .author-star-btn { font-size: 13px !important; }
+      .author-star-btn.author-star-active { color: gold; }
+      @media (max-width: 768px) {
+        #author-view { position: fixed; inset: 0; bottom: calc(72px + env(safe-area-inset-bottom, 0px)); z-index: 3500; background: #0d0d0d; }
+        .author-view-close { display: block; }
+        #author-grid { grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 8px; }
       }
 
       /* ── Stars view ── */
