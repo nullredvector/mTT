@@ -55,7 +55,7 @@
   }
 
   function saveStars()  { saveStarsLocal();  syncToServer(); }
-  function saveGroups() { saveGroupsLocal(); syncToServer(); }
+  function saveGroups() { saveGroupsLocal(); syncToServer(); refreshBracesButtons(); }
   function saveLevels() { saveLevelsLocal(); syncToServer(); }
 
   let stars  = loadStarsLocal();
@@ -98,7 +98,7 @@
         const { s, g, l, openAuthor } = e.data || {};
         if (openAuthor) { openAuthorByName(openAuthor); try { window.focus(); } catch (_) {} }
         if (s) { stars  = s;  saveStarsLocal();  refreshAllButtons(); updateToggleBtn(); }
-        if (g) { groups = g;  saveGroupsLocal(); }
+        if (g) { groups = g;  saveGroupsLocal(); refreshBracesButtons(); }
         if (l) { levels = l;  saveLevelsLocal(); }
         if (s || g || l) syncToServer();
         if (starsTabActive) renderStarsView();
@@ -129,6 +129,52 @@
   function inQuickGroup(videoId, groupName) {
     const g = groups.find(x => x.name === groupName);
     return g ? g.videoIds.includes(videoId) : false;
+  }
+
+  // ── "braces" tag: membership in the user's existing group named "braces" ──
+  const BRACES_SVG = size =>
+    `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">` +
+    '<rect x="2" y="6" width="20" height="12" rx="5"/><path d="M7 6v12M12 6v12M17 6v12"/><path d="M2 12h20" stroke-width="1.3"/>' +
+    '<g fill="currentColor" stroke="none"><rect x="3.4" y="10.9" width="2.2" height="2.2" rx=".5"/><rect x="8.4" y="10.9" width="2.2" height="2.2" rx=".5"/>' +
+    '<rect x="13.4" y="10.9" width="2.2" height="2.2" rx=".5"/><rect x="18.4" y="10.9" width="2.2" height="2.2" rx=".5"/></g></svg>';
+
+  function findBracesGroup() {
+    return groups.find(g => String(g.name).trim().toLowerCase() === 'braces');
+  }
+
+  function inBraces(videoId) {
+    const g = findBracesGroup();
+    return g ? g.videoIds.includes(videoId) : false;
+  }
+
+  // Toggles the video in the braces group (the group is created only if it doesn't exist yet)
+  function toggleBraces(videoId) {
+    const g = findBracesGroup();
+    return toggleQuickGroup(videoId, g ? g.name : 'braces');
+  }
+
+  // A braces button. Its video id lives in data-vid so one button can follow a changing video.
+  function makeBracesBtn(className, videoId, iconSize) {
+    const b = document.createElement('button');
+    b.className = className + ' braces-btn';
+    b.innerHTML = BRACES_SVG(iconSize);
+    if (videoId) b.dataset.vid = videoId;
+    b._refresh = () => {
+      const on = inBraces(b.dataset.vid);
+      b.classList.toggle('braces-on', on);
+      b.title = on ? 'Remove from braces' : 'Add to braces';
+    };
+    b._refresh();
+    b.addEventListener('click', e => {
+      e.stopPropagation();
+      e.preventDefault();
+      if (b.dataset.vid) toggleBraces(b.dataset.vid);
+    });
+    return b;
+  }
+
+  function refreshBracesButtons() {
+    document.querySelectorAll('.braces-btn').forEach(b => b._refresh && b._refresh());
   }
 
   function getVideoIdFromSrc(src) {
@@ -378,6 +424,15 @@
       coverDiv.appendChild(btn);
     }
 
+    // Rows are recycled by the virtual list, so keep the braces button on the current video
+    let bb = coverDiv.querySelector('.braces-list-btn');
+    if (!bb) {
+      bb = makeBracesBtn('braces-list-btn', videoId, 15);
+      coverDiv.appendChild(bb);
+    }
+    bb.dataset.vid = videoId;
+    bb._refresh();
+
     const on = Boolean(stars[videoId]);
     btn.classList.toggle('star-active', on);
     btn.title = on ? 'Remove from Stars' : 'Add to Stars';
@@ -411,7 +466,7 @@
 
     function handleClick(e) {
       // Don't intercept star button or other control clicks
-      if (e.target.closest('.star-btn') || e.target.closest('.overlay-ctrl-btn')) return;
+      if (e.target.closest('.star-btn') || e.target.closest('.braces-btn') || e.target.closest('.overlay-ctrl-btn')) return;
       e.stopImmediatePropagation();
       e.preventDefault();
       const img = coverDiv.querySelector('img.thumbnail');
@@ -814,6 +869,7 @@
       starBtn.classList.toggle('active', Boolean(stars[item.id]));
     });
     rightCenter.appendChild(starBtn);
+    rightCenter.appendChild(makeBracesBtn('overlay-ctrl-btn overlay-braces-btn', item.id, 24));
 
     const lvlBtn = document.createElement('button');
     lvlBtn.className = 'overlay-ctrl-btn overlay-lvl-btn';
@@ -2378,6 +2434,7 @@
         refreshStarBtn();
       });
       cover.appendChild(starBtn);
+      cover.appendChild(makeBracesBtn('stars-grid-remove grid-braces-btn', id, 13));
 
       // Group button (top-left) ── same position as stars-grid-add-group
       const grpBtn = document.createElement('button');
@@ -2786,6 +2843,8 @@
       starBtn.title = stars[currentItem.id] ? 'Remove from Stars' : 'Add to Stars';
     });
 
+    const bracesBtn = makeBracesBtn('player-ctrl-btn player-braces-btn', null, 24);
+
     const lvlBtn = document.createElement('button');
     lvlBtn.className = 'player-ctrl-btn player-lvl-btn';
     lvlBtn.title = 'Set level';
@@ -2824,6 +2883,7 @@
     rightCenter.appendChild(thumbUpBtn);
     rightCenter.appendChild(thumbDownBtn);
     rightCenter.appendChild(starBtn);
+    rightCenter.appendChild(bracesBtn);
     rightCenter.appendChild(lvlBtn);
     rightCenter.appendChild(groupBtn);
     ctrlLayer.appendChild(rightCenter);
@@ -2865,6 +2925,9 @@
 
       starBtn.classList.toggle('active', Boolean(stars[item.id]));
       starBtn.title = stars[item.id] ? 'Remove from Stars' : 'Add to Stars';
+
+      bracesBtn.dataset.vid = item.id;
+      bracesBtn._refresh();
 
       lvlBtn.textContent = levels[item.id] != null ? String(levels[item.id]) : 'lvl';
       lvlBtn.classList.toggle('active', levels[item.id] != null);
@@ -3001,6 +3064,7 @@
     groupBtn.addEventListener('click', e => { e.stopPropagation(); showGroupPicker(groupBtn, id); });
 
     rightCenter.appendChild(starBtn);
+    rightCenter.appendChild(makeBracesBtn('player-ctrl-btn player-braces-btn', id, 24));
     rightCenter.appendChild(groupBtn);
     controls.appendChild(rightCenter);
 
@@ -3104,6 +3168,7 @@ body:hover .ctl,.ctl.pinned{opacity:1}
 .b{background:rgba(0,0,0,.5);border:none;border-radius:50%;color:#ddd;width:40px;height:40px;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s;pointer-events:auto;flex-shrink:0}
 .b:hover{background:rgba(0,0,0,.85)}
 .b.on{color:gold}
+.bbr.on{color:#4fc3f7}
 .blvl{font-size:12px;font-weight:700;letter-spacing:-.5px}
 .bgrp svg{pointer-events:none}
 .scrim{position:absolute;bottom:0;left:0;right:0;height:180px;background:linear-gradient(transparent,rgba(0,0,0,.8));pointer-events:none}
@@ -3153,6 +3218,7 @@ body:hover .ctl,.ctl.pinned{opacity:1}
 </div>
 <script>
 const API='${apiOrigin}/api/stars';
+const BR='${BRACES_SVG(20)}';
 let vids=${safeJson(vidList)};
 let idx=${vidOffset};
 let muted=true;
@@ -3291,6 +3357,23 @@ function render(){
     ss(s); sb.classList.toggle('on',Boolean(ls()[item.id]));
   });
   rc.appendChild(sb);
+
+  // braces tag (toggles the shared "braces" group)
+  const bb=document.createElement('button');
+  bb.className='b bbr'; bb.innerHTML=BR;
+  const bracesOf=gs=>gs.find(x=>String(x.name).trim().toLowerCase()==='braces');
+  const inBr=()=>{const g=bracesOf(lg());return !!(g&&g.videoIds.includes(item.id));};
+  const paintBr=()=>{const on=inBr();bb.classList.toggle('on',on);bb.title=on?'Remove from braces':'Add to braces';};
+  paintBr();
+  bb.addEventListener('click',e=>{
+    e.stopPropagation();
+    const gs=lg(); let g=bracesOf(gs);
+    if(!g){g={id:Math.random().toString(36).slice(2),name:'braces',videoIds:[]};gs.push(g);}
+    const i=g.videoIds.indexOf(item.id);
+    if(i<0)g.videoIds.push(item.id); else g.videoIds.splice(i,1);
+    sg(gs); paintBr();
+  });
+  rc.appendChild(bb);
 
   // lvl
   const lb=document.createElement('button');
@@ -3508,6 +3591,7 @@ render();
       refreshStar();
     });
     cover.appendChild(starBtn);
+    cover.appendChild(makeBracesBtn('stars-grid-remove grid-braces-btn', v.id, 13));
 
     const grpBtn = document.createElement('button');
     grpBtn.className = 'stars-grid-add-group';
@@ -3897,6 +3981,23 @@ render();
       div.cover:hover .star-btn, .star-btn.star-active { opacity: 1; }
       .star-btn:hover { color: gold; transform: scale(1.25); }
       .star-btn.star-active { color: gold; }
+
+      /* ── Braces tag buttons ── */
+      .braces-btn svg { display: block; pointer-events: none; }
+      .braces-list-btn {
+        position: absolute; top: 3px; right: 27px; z-index: 10;
+        width: 22px; height: 22px; padding: 0; background: none; border: none;
+        display: flex; align-items: center; justify-content: center;
+        color: rgba(255,255,255,0.4); cursor: pointer; opacity: 0;
+        filter: drop-shadow(0 1px 3px rgba(0,0,0,.9));
+        transition: color .1s, transform .1s;
+      }
+      div.cover:hover .braces-list-btn, .braces-list-btn.braces-on { opacity: 1; }
+      .braces-list-btn:hover { color: #4fc3f7; transform: scale(1.2); }
+      .braces-list-btn.braces-on, .overlay-braces-btn.braces-on, .player-braces-btn.braces-on { color: #4fc3f7; }
+      .grid-braces-btn { right: 28px !important; }
+      .grid-braces-btn:hover { background: rgba(30,110,160,.85) !important; color: #fff !important; }
+      .grid-braces-btn.braces-on { color: #4fc3f7 !important; opacity: 1 !important; }
 
       /* ── Bottom-right toggle ── */
       #star-toggle {
