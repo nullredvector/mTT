@@ -54,9 +54,9 @@
     }, 300);
   }
 
-  function saveStars()  { saveStarsLocal();  syncToServer(); }
-  function saveGroups() { saveGroupsLocal(); syncToServer(); refreshBracesButtons(); }
-  function saveLevels() { saveLevelsLocal(); syncToServer(); }
+  function saveStars()  { saveStarsLocal();  syncToServer(); refreshToolButtons(); }
+  function saveGroups() { saveGroupsLocal(); syncToServer(); refreshToolButtons(); }
+  function saveLevels() { saveLevelsLocal(); syncToServer(); refreshToolButtons(); }
 
   let stars  = loadStarsLocal();
   let groups = loadGroupsLocal();
@@ -98,7 +98,7 @@
         const { s, g, l, openAuthor } = e.data || {};
         if (openAuthor) { openAuthorByName(openAuthor); try { window.focus(); } catch (_) {} }
         if (s) { stars  = s;  saveStarsLocal();  refreshAllButtons(); updateToggleBtn(); }
-        if (g) { groups = g;  saveGroupsLocal(); refreshBracesButtons(); }
+        if (g) { groups = g;  saveGroupsLocal(); refreshToolButtons(); }
         if (l) { levels = l;  saveLevelsLocal(); }
         if (s || g || l) syncToServer();
         if (starsTabActive) renderStarsView();
@@ -173,8 +173,59 @@
     return b;
   }
 
-  function refreshBracesButtons() {
-    document.querySelectorAll('.braces-btn').forEach(b => b._refresh && b._refresh());
+  function refreshToolButtons() {
+    document.querySelectorAll('.braces-btn, .thumb-tool').forEach(b => b._refresh && b._refresh());
+  }
+
+  // Right-center tool stack on a thumbnail (username page + stars grid): star, braces, group picker, level
+  function buildThumbTools(videoId, coverSrc, authorName, desc) {
+    const wrap = document.createElement('div');
+    wrap.className = 'thumb-tools';
+    const mk = cls => {
+      const b = document.createElement('button');
+      b.className = 'thumb-tool ' + cls;
+      return b;
+    };
+
+    const star = mk('thumb-star');
+    star._refresh = () => {
+      const on = Boolean(stars[videoId]);
+      star.textContent = on ? '★' : '☆';
+      star.title = on ? 'Remove from Stars' : 'Add to Stars';
+      star.classList.toggle('on', on);
+    };
+    star._refresh();
+    star.addEventListener('click', e => {
+      e.stopPropagation();
+      toggleStar(videoId, coverSrc, authorName, desc);
+      star._refresh();
+    });
+
+    const braces = makeBracesBtn('thumb-tool', videoId, 16);
+
+    const grp = mk('thumb-grp');
+    grp.textContent = '⊕';
+    grp.title = 'Add to group';
+    grp.addEventListener('click', e => { e.stopPropagation(); showGroupPicker(grp, videoId); });
+
+    const lvl = mk('thumb-lvl');
+    lvl._refresh = () => {
+      const n = levels[videoId];
+      lvl.textContent = n != null ? String(n) : 'lvl';
+      lvl.title = n != null ? 'Level ' + n : 'Set level';
+      lvl.classList.toggle('on', n != null);
+    };
+    lvl._refresh();
+    lvl.addEventListener('click', e => {
+      e.stopPropagation();
+      showLevelPicker(lvl, videoId, () => {
+        lvl._refresh();
+        if (starsTabActive) renderStarsView();
+      });
+    });
+
+    wrap.append(star, braces, grp, lvl);
+    return wrap;
   }
 
   function getVideoIdFromSrc(src) {
@@ -1088,6 +1139,7 @@
 
   function applyThumbSize(grid, px) {
     grid.style.gridTemplateColumns = `repeat(auto-fill, minmax(${px}px, 1fr))`;
+    grid.style.setProperty('--tool', Math.max(20, Math.min(32, Math.round(px * 0.15))) + 'px');
   }
 
   // Mark a thumbnail as previewable and add mouse-over playback
@@ -1744,16 +1796,7 @@
       }
     });
     cover.appendChild(rmBtn);
-    cover.appendChild(makeBracesBtn('stars-grid-remove grid-braces-btn', star.id, 13));
-
-    if ((isGlobalView || activeView === '__ungrouped__' || isInGroup) && groups.length > 0) {
-      const addBtn = document.createElement('button');
-      addBtn.className = 'stars-grid-add-group';
-      addBtn.title = 'Add to group';
-      addBtn.textContent = '⊕';
-      addBtn.addEventListener('click', e => { e.stopPropagation(); showGroupPicker(addBtn, star.id); });
-      cover.appendChild(addBtn);
-    }
+    cover.appendChild(buildThumbTools(star.id, star.coverSrc, authorName, desc));
 
     card.appendChild(cover);
     if (authorName) {
@@ -3577,29 +3620,7 @@ render();
     img.onerror = () => { img.style.display = 'none'; };
     cover.appendChild(img);
 
-    const starBtn = document.createElement('button');
-    starBtn.className = 'stars-grid-remove author-star-btn';
-    const refreshStar = () => {
-      const on = Boolean(stars[v.id]);
-      starBtn.textContent = on ? '★' : '☆';
-      starBtn.title = on ? 'Remove from Stars' : 'Add to Stars';
-      starBtn.classList.toggle('author-star-active', on);
-    };
-    refreshStar();
-    starBtn.addEventListener('click', e => {
-      e.stopPropagation();
-      toggleStar(v.id, v.coverSrc, v.authorName, v.desc);
-      refreshStar();
-    });
-    cover.appendChild(starBtn);
-    cover.appendChild(makeBracesBtn('stars-grid-remove grid-braces-btn', v.id, 13));
-
-    const grpBtn = document.createElement('button');
-    grpBtn.className = 'stars-grid-add-group';
-    grpBtn.textContent = '⊕';
-    grpBtn.title = 'Add to group';
-    grpBtn.addEventListener('click', e => { e.stopPropagation(); showGroupPicker(grpBtn, v.id); });
-    cover.appendChild(grpBtn);
+    cover.appendChild(buildThumbTools(v.id, v.coverSrc, v.authorName, v.desc));
     card.appendChild(cover);
 
     if (v.desc) {
@@ -4143,8 +4164,27 @@ render();
       #author-grid { flex: 1; overflow-y: auto; padding: 14px 18px; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; align-content: start; }
       .author-empty { color: #777; font-size: 14px; grid-column: 1 / -1; }
       #author-view .stars-grid-remove, #author-view .stars-grid-add-group { opacity: 1; }
-      .author-star-btn { font-size: 13px !important; }
-      .author-star-btn.author-star-active { color: gold; }
+      .thumb-tools {
+        position: absolute; right: 6px; top: 50%; transform: translateY(-50%); z-index: 4;
+        display: flex; flex-direction: column; align-items: center;
+        gap: calc(var(--tool, 28px) * 0.25);
+      }
+      .thumb-tool {
+        width: var(--tool, 28px); height: var(--tool, 28px); padding: 0;
+        border: none; border-radius: 50%; background: rgba(0,0,0,.62); color: #ddd;
+        font-size: calc(var(--tool, 28px) * 0.52); line-height: 1; cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+        box-shadow: 0 1px 5px rgba(0,0,0,.5); opacity: 0;
+        transition: opacity .1s, background .1s, color .1s;
+      }
+      .thumb-tool svg { width: 62%; height: 62%; }
+      .stars-grid-cover:hover .thumb-tool, .thumb-tool.on, .thumb-tool.braces-on { opacity: 1; }
+      .thumb-tool:hover { background: rgba(0,0,0,.9); color: #fff; }
+      .thumb-star.on { color: gold; }
+      .thumb-lvl { font-size: calc(var(--tool, 28px) * 0.36); font-weight: 700; letter-spacing: -.5px; }
+      .thumb-lvl.on { color: #fe2c55; }
+      .thumb-tool.braces-on { color: #4fc3f7; }
+      @media (hover: none) { .thumb-tool { opacity: .9; } }
       @media (max-width: 768px) {
         #author-view { position: fixed; inset: 0; bottom: calc(72px + env(safe-area-inset-bottom, 0px)); z-index: 3500; background: #0d0d0d; }
         .author-view-close { display: block; }
@@ -4474,9 +4514,6 @@ render();
         #stars-sidebar { display: none !important; }
         #stars-main-header { display: none !important; }
         #stars-grid { padding: 10px 12px; gap: 10px; }
-        /* no hover on touch screens, so the braces button stays visible on the stars grid */
-        #stars-grid .grid-braces-btn { opacity: 0.85; }
-
         /* ── Mobile stars: title-only header ── */
         #stars-main { position: relative; overflow: hidden; }
         #stars-mobile-header {
