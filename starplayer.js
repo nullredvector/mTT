@@ -3104,6 +3104,7 @@ render();
   function makeNavTab(className, svgPath, label, onClick) {
     const tab = document.createElement('div');
     tab.className = className + ' pressable';
+    tab.title = label;
     tab.innerHTML =
       `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" style="flex-shrink:0">${svgPath}</svg>${label}`;
     tab.addEventListener('click', onClick);
@@ -3113,6 +3114,11 @@ render();
   function injectNavTabs() {
     const nav = document.querySelector('nav');
     if (!nav) return;
+
+    // Labels are hidden by CSS, so keep them available as tooltips
+    nav.querySelectorAll('.pressable').forEach(t => {
+      if (!t.title) t.title = t.textContent.trim();
+    });
 
     // Stars tab — after .following
     if (!nav.querySelector('.stars-tab')) {
@@ -3263,15 +3269,33 @@ render();
 
       /* ── Stars & Player nav tabs ── */
       nav .stars-tab, nav .player-tab {
-        display: flex; align-items: center; gap: 6px;
-        padding: 0 16px; cursor: pointer; font-size: 14px;
-        border-bottom: 3px solid transparent; color: inherit;
-        white-space: nowrap; transition: color .15s;
+        display: flex; align-items: center;
+        cursor: pointer; border-bottom: 3px solid transparent; color: inherit;
+        white-space: nowrap;
       }
-      nav .stars-tab:hover, nav .player-tab:hover { color: var(--active, #d7d7d7); }
+
+      /* ── Icon-only top nav (labels hidden; title tooltips added in JS) ── */
+      nav { margin-left: 20px !important; }
+      nav .likes, nav .bookmarked, nav .following, nav .readme,
+      nav .stars-tab, nav .player-tab {
+        font-size: 0 !important; gap: 0 !important;
+        margin: 3.3px 2px 0 !important; padding: 0 14px !important;
+        justify-content: center; border-radius: 6px 6px 0 0;
+        transition: color .15s, background .15s;
+      }
+      nav .likes svg, nav .bookmarked svg, nav .following svg, nav .readme svg,
+      nav .stars-tab svg, nav .player-tab svg {
+        width: 20px !important; height: 20px !important; margin: 0 !important;
+      }
+      nav .likes:not(.active):hover, nav .bookmarked:not(.active):hover,
+      nav .following:not(.active):hover, nav .readme:not(.active):hover,
+      nav .stars-tab:not(.active):hover, nav .player-tab:not(.active):hover {
+        color: var(--active, #d7d7d7); background: rgba(255,255,255,.05);
+      }
+      nav .likes.active, nav .bookmarked.active, nav .following.active, nav .readme.active,
       nav .stars-tab.active, nav .player-tab.active {
-        border-bottom: 3px solid var(--active, #d7d7d7);
-        color: var(--active, #d7d7d7); cursor: default;
+        color: var(--active, #d7d7d7); background: rgba(255,255,255,.09);
+        border-bottom: 3px solid var(--active, #d7d7d7); cursor: default;
       }
 
       /* ── Stars view ── */
