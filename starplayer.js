@@ -1744,6 +1744,7 @@
       }
     });
     cover.appendChild(rmBtn);
+    cover.appendChild(makeBracesBtn('stars-grid-remove grid-braces-btn', star.id, 13));
 
     if ((isGlobalView || activeView === '__ungrouped__' || isInGroup) && groups.length > 0) {
       const addBtn = document.createElement('button');
@@ -4473,6 +4474,8 @@ render();
         #stars-sidebar { display: none !important; }
         #stars-main-header { display: none !important; }
         #stars-grid { padding: 10px 12px; gap: 10px; }
+        /* no hover on touch screens, so the braces button stays visible on the stars grid */
+        #stars-grid .grid-braces-btn { opacity: 0.85; }
 
         /* ── Mobile stars: title-only header ── */
         #stars-main { position: relative; overflow: hidden; }
