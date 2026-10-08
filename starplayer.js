@@ -221,7 +221,6 @@
     const authorName = (a && a.uniqueIds && a.uniqueIds[0]) || '';
     return { desc, authorName };
   }
-  window._spDbg = { getVideoInfo, findArchiveData };
 
   function tabForCover(coverSrc) {
     if (coverSrc.includes('data/Likes/'))     return 'likes';
