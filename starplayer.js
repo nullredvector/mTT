@@ -3231,12 +3231,15 @@
     muteBtn.className = 'player-ctrl-btn player-mute-btn';
     muteBtn.innerHTML = muteIcon(true);
     muteBtn.title = 'Unmute';
+    const paintMute = () => {
+      muteBtn.innerHTML = muteIcon(currentMuted);
+      muteBtn.title = currentMuted ? 'Unmute' : 'Mute';
+    };
     muteBtn.addEventListener('click', e => {
       e.stopPropagation();
       currentMuted = !currentMuted;
       if (currentVid) currentVid.muted = currentMuted;
-      muteBtn.innerHTML = muteIcon(currentMuted);
-      muteBtn.title = currentMuted ? 'Unmute' : 'Mute';
+      paintMute();
     });
 
     rightCenter.appendChild(thumbUpBtn);
@@ -3301,6 +3304,57 @@
 
     const videoEls = [];
 
+    // Start a video and cope with browsers refusing autoplay (common on phones):
+    // - sound refused (e.g. after you unmuted, the next video has no tap of its own): play muted instead
+    //   and show the muted state on the button
+    // - even muted play refused: mark the slide so a tap on it starts the video
+    // - a play() cut short by pause()/a new load is normal while scrolling, not a refusal
+    function startPlayback(vid) {
+      const p = vid.play();
+      if (!p || !p.catch) return;
+      p.catch(err => {
+        if (vid !== currentVid || (err && err.name === 'AbortError')) return;
+        if (!vid.muted) {
+          currentMuted = true;
+          vid.muted = true;
+          paintMute();
+          startPlayback(vid);
+        } else {
+          vid.parentElement?.classList.add('needs-tap');
+        }
+      });
+    }
+
+    // Make the slide at idx the active one: controls, counter, playback
+    function activate(idx) {
+      const vid = videoEls[idx];
+      if (!vid) return;
+      playerColumnOffsets[0] = winStart + idx;
+      updateControls(renderList[idx], vid);
+      vid._userPaused = false;
+      startPlayback(vid);
+      if (counter) counter.textContent = `${winStart + idx + 1} / ${total}`;
+      // a little head start for the next video
+      const next = videoEls[idx + 1];
+      if (next && next.preload === 'none') next.preload = 'metadata';
+    }
+
+    // Safety net for the observer: once scrolling settles, the slide in view must be the one playing
+    let settleTimer = null;
+    function syncToView() {
+      const h = feed.clientHeight;
+      if (!h) return;
+      const idx = Math.max(0, Math.min(videoEls.length - 1, Math.round(feed.scrollTop / h)));
+      const vid = videoEls[idx];
+      if (!vid) return;
+      if (currentVid !== vid) {
+        videoEls.forEach((v, j) => { if (j !== idx && !v.paused) v.pause(); });
+        activate(idx);
+      } else if (vid.paused && !vid._userPaused) {
+        startPlayback(vid);
+      }
+    }
+
     renderList.forEach((item, idx) => {
       const slide = document.createElement('div');
       slide.className = 'player-slide';
@@ -3315,6 +3369,7 @@
       video.poster = item.coverSrc;
       video.className = 'player-video';
       video.addEventListener('playing', () => { video.poster = ''; }, { once: true });
+      video.addEventListener('playing', () => { slide.classList.remove('needs-tap'); });
       video.addEventListener('ended',   () => { video.currentTime = 0; video.play().catch(() => {}); });
       video.addEventListener('contextmenu', e => { e.preventDefault(); video.paused ? video.play().catch(() => {}) : video.pause(); });
 
@@ -3325,7 +3380,8 @@
         const dy = e.changedTouches[0].clientY - _sty;
         // Tap only — overlay handles horizontal swipe, feed handles vertical scroll
         if (Math.abs(dx) < 15 && Math.abs(dy) < 15) {
-          video.paused ? video.play().catch(() => {}) : video.pause();
+          if (video.paused) { video._userPaused = false; video.play().catch(() => {}); }
+          else { video._userPaused = true; video.pause(); }
         }
       }, { passive: true });
 
@@ -3356,10 +3412,7 @@
             const idx = parseInt(entry.target.dataset.idx);
             const vid = videoEls[idx];
             if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
-              playerColumnOffsets[0] = winStart + idx;
-              updateControls(renderList[idx], vid);
-              vid.play().catch(() => {});
-              if (counter) counter.textContent = `${winStart + idx + 1} / ${total}`;
+              activate(idx);
             } else {
               vid.pause();
             }
@@ -3369,9 +3422,12 @@
         feed.querySelectorAll('.player-slide').forEach(s => io.observe(s));
 
         // Kick off the starting video
-        updateControls(renderList[startIdx], videoEls[startIdx]);
-        videoEls[startIdx]?.play().catch(() => {});
-        if (counter) counter.textContent = `${winStart + startIdx + 1} / ${total}`;
+        activate(startIdx);
+
+        feed.addEventListener('scroll', () => {
+          clearTimeout(settleTimer);
+          settleTimer = setTimeout(syncToView, 140);
+        }, { passive: true });
       } else {
         requestAnimationFrame(setSlideHeights);
       }
@@ -5016,6 +5072,11 @@ render();
       .grid-size { width: 110px; height: 16px; margin: 0; accent-color: #aaa; cursor: pointer; }
       .preview-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
       .stars-grid-cover.is-playing::after { display: none; }
+      .player-slide.needs-tap::after {
+        content: '▶'; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        width: 64px; height: 64px; border-radius: 50%; background: rgba(0,0,0,.55); color: #fff;
+        font-size: 28px; line-height: 64px; text-align: center; pointer-events: none;
+      }
       .author-view-close { display: none; margin-left: auto; background: none; border: none; color: #ccc; font-size: 18px; cursor: pointer; padding: 0 4px; }
       #author-grid { flex: 1; overflow-y: auto; padding: 14px 18px; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; align-content: start; }
       .author-empty { color: #777; font-size: 14px; grid-column: 1 / -1; }
