@@ -7,6 +7,7 @@ const dbStars  = require('./db_stars');
 
 const ARCHIVE_DIR = process.env.ARCHIVE_DIR || '/archive';
 const PORT        = parseInt(process.env.PORT || '8080', 10);
+const TTPULL_URL  =(process.env.TTPULL_URL || 'http://ttpull:3847').replace(/\/$/, '');
 
 // ── Patch constants (must stay in sync with patch.js) ──────────────────────
 const ANCHOR    = '<script src="data/.appdata/app.js"></script>';
@@ -63,6 +64,31 @@ http.createServer((req, res) => {
       return;
     }
     res.writeHead(405); res.end('Method not allowed'); return;
+  }
+
+  // ── ttpull live log (proxy) ────────────────────────────────────────────────
+  // ttpull keeps its last log lines in memory (GET /logs) and exposes /status. The browser can't
+  // reach it directly (other port, possibly HTTPS here), so the log tab polls this proxy.
+  if (pathname === '/api/ttpull/logs' && req.method === 'GET') {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 4000);
+    Promise.all([
+      fetch(TTPULL_URL + '/logs',   { signal: ctl.signal }).then(r => { if (!r.ok) throw new Error('logs ' + r.status); return r.text(); }),
+      fetch(TTPULL_URL + '/status', { signal: ctl.signal }).then(r => r.ok ? r.json() : null).catch(() => null),
+    ]).then(([text, status]) => {
+      const lines = text.split('\n').filter(Boolean);
+      const body = JSON.stringify({
+        ok: true, lines,
+        status: status && { running: !!status.running, phase: status.phase || null, hasSession: !!status.hasSession },
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      res.end(body);
+    }).catch(e => {
+      const reason = e.name === 'AbortError' ? 'timed out' : (e.cause && e.cause.code) || e.message;
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify({ ok: false, error: `ttpull unreachable at ${TTPULL_URL} (${reason})` }));
+    }).finally(() => clearTimeout(timer));
+    return;
   }
 
   // ── Tab sessions API ───────────────────────────────────────────────────────

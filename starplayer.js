@@ -423,6 +423,31 @@
 
   function coverSrcFor(id) { return `data/${videoDirFor(id)}/covers/${id}.jpg`; }
 
+  // Videos that are in the archive but gone from the official lists, newest download first.
+  // Same rule as the archive viewer: downloaded but not in the official list.
+  let _disappearedCache = null;
+  function disappearedIds() {
+    const d = _dbCache;
+    if (!d) return [];
+    if (_disappearedCache && _disappearedCache.src === d) return _disappearedCache.ids;
+    const known = id => { const v = d.videos[id]; return Boolean(v && d.authors[v.authorId]); };
+    const out = [];
+    const seen = new Set();
+    const add = id => { if (!seen.has(id) && known(id)) { seen.add(id); out.push(id); } };
+    // Without an official list every download would look "disappeared", so skip a missing or empty one
+    const gone = src => {
+      const official = src && src.officialList;
+      if (!Array.isArray(official) || !official.length) return [];
+      const set = new Set(official);
+      return [...(src.downloaded || [])].filter(id => !set.has(id)).reverse();
+    };
+    gone(d.likes).forEach(add);
+    gone(d.bookmarked).forEach(add);
+    Object.values((d.following && d.following.authorItems) || {}).forEach(it => (it.disappeared || []).forEach(add));
+    _disappearedCache = { src: d, ids: out };
+    return out;
+  }
+
   // Every downloaded video by this author, newest first, with the folder it lives in
   function authorVideos(authorId) {
     const d = _dbCache;
@@ -780,9 +805,10 @@
     const videoId = getVideoIdFromSrc(coverSrc);
     if (!videoId) return;
     // In stars view, use the exact rendered list so order and lvl-only entries match
-    if (starsTabActive && starsContextList.length > 0) {
-      const idx = starsContextList.findIndex(v => v.id === videoId);
-      openVideoOverlay(idx >= 0 ? idx : 0, starsContextList);
+    if (starsTabActive && starsContextItems.length > 0) {
+      const ctx = getStarsContext();
+      const idx = ctx.findIndex(v => v.id === videoId);
+      openVideoOverlay(idx >= 0 ? idx : 0, ctx);
       return;
     }
     const s0 = stars[videoId];
@@ -1215,10 +1241,54 @@
     if (!container) return;
     container.querySelectorAll('.preview-grid').forEach(g => {
       if (g._spIO) { g._spIO.disconnect(); g._spIO = null; }
+      if (g._fillIO) { g._fillIO.disconnect(); g._fillIO = null; }
     });
     container.querySelectorAll('.preview-cover').forEach(c => {
       c._spVisible = false; c._spHover = false; syncCoverPlayback(c);
     });
+  }
+
+  // Fill a grid in chunks as the user scrolls instead of building every card at once.
+  // A category can hold tens of thousands of videos; makeCard(item, index) is only called for
+  // the ones that get near the viewport.
+  const GRID_CHUNK = 60;
+  function fillGrid(grid, items, makeCard) {
+    let next = 0;
+    const sentinel = document.createElement('div');
+    sentinel.className = 'grid-sentinel';
+
+    function addChunk() {
+      const end = Math.min(next + GRID_CHUNK, items.length);
+      const frag = document.createDocumentFragment();
+      const cards = [];
+      for (; next < end; next++) {
+        const card = makeCard(items[next], next);
+        cards.push(card);
+        frag.appendChild(card);
+      }
+      grid.insertBefore(frag, sentinel.parentNode === grid ? sentinel : null);
+      if (grid._spIO) cards.forEach(c => c.querySelectorAll('.preview-cover').forEach(cv => grid._spIO.observe(cv)));
+      if (next >= items.length) {
+        sentinel.remove();
+        if (grid._fillIO) { grid._fillIO.disconnect(); grid._fillIO = null; }
+      }
+    }
+
+    function pump() {
+      while (next < items.length) {
+        const g = grid.getBoundingClientRect(), s = sentinel.getBoundingClientRect();
+        if (s.top > g.bottom + 800) break;
+        addChunk();
+      }
+    }
+
+    if (items.length > GRID_CHUNK) grid.appendChild(sentinel);
+    addChunk();
+    if (items.length <= GRID_CHUNK) return;
+    grid._fillIO = new IntersectionObserver(entries => {
+      if (entries.some(e => e.isIntersecting)) pump();
+    }, { root: grid, rootMargin: '800px' });
+    grid._fillIO.observe(sentinel);
   }
 
   function setPreviewsSuspended(v) {
@@ -1273,16 +1343,30 @@
 
   let starsTabActive = false;
   let starsViewEl    = null;
-  let activeView       = '__tagged__'; // null (All Stars / selected groups) | '__tagged__' | '__lvl_groups__' | '__ungrouped__' (Untagged)
+  let activeView       = '__tagged__'; // null (All Stars / selected groups) | '__tagged__' | '__lvl_groups__' | '__ungrouped__' (Untagged) | '__disappeared__'
   let activeGroupIds   = new Set();   // empty = all stars; non-empty = union of selected groups
   let activeLvl        = new Set();   // empty = no filter; set of numbers = multi-select
   let lvlSectionOpen   = true;
   let mobileStarsLvlOpen = false;     // mobile: whether inline lvl strip is visible
   let mobileStarsGroupsOpen = false;  // mobile: whether group picker panel is expanded
   let groupSortOrder   = 'alpha';     // 'alpha' | 'count'
-  let starsContextList = [];        // mirrors the currently rendered video grid order
+  let starsContextItems = [];       // items of the rendered grid, in order
+  let starsContextCache = null;     // player contexts built from them when a video is opened (lists can be huge)
+  function setStarsContext(items) { starsContextItems = items; starsContextCache = null; }
+  function getStarsContext() {
+    // Light entries on purpose: the players look up the author and caption themselves, and the
+    // list can hold tens of thousands of videos
+    if (!starsContextCache) {
+      starsContextCache = starsContextItems.map(item => {
+        const s = item.lvlOnly ? item : (stars[item.id] || item);
+        return { id: s.id, coverSrc: s.coverSrc, videoPath: getVideoPath(s.coverSrc), authorName: s.authorName || '', desc: s.desc || '' };
+      });
+    }
+    return starsContextCache;
+  }
 
   function showStarsTab() {
+    if (logTabActive) hideLogView();
     if (activeAuthorId) hideAuthorView();
     starsTabActive = true;
     if (!isMobilePlayer()) closePlayer();
@@ -1292,7 +1376,7 @@
 
     if (isMobilePlayer()) { activeMobileTab = 'stars'; updateMobileNavActive(); }
     else {
-      document.querySelectorAll('nav .active').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('nav .author-tab.active, nav .log-tab.active').forEach(el => el.classList.remove('active'));
       document.querySelector('nav .stars-tab')?.classList.add('active');
     }
 
@@ -1307,6 +1391,7 @@
   }
 
   function showMainContent() {
+    if (logTabActive) hideLogView();
     if (activeAuthorId) hideAuthorView();
     starsTabActive = false;
     document.querySelector('main')?.style.removeProperty('display');
@@ -1329,6 +1414,7 @@
       if      (id === '__lvl_groups__') isActive = activeView === '__lvl_groups__';
       else if (id === '__ungrouped__')  isActive = activeView === '__ungrouped__';
       else if (id === '__tagged__')     isActive = activeView === '__tagged__';
+      else if (id === '__disappeared__') isActive = activeView === '__disappeared__';
       else if (id === 'all')            isActive = activeView === null && activeGroupIds.size === 0;
       else                              isActive = activeGroupIds.has(id);
       const item = document.createElement('div');
@@ -1389,6 +1475,15 @@
     const ungroupedItem = makeSidebarItem('__ungrouped__', 'Untagged', ungroupedTotal);
     ungroupedItem.addEventListener('click', () => { activeView = '__ungrouped__'; activeGroupIds.clear(); renderStarsView(); });
     sidebar.appendChild(ungroupedItem);
+
+    // Disappeared (under Untagged): videos removed from the official lists that are in no group
+    const disappearedList = disappearedIds().filter(id => !taggedIds.has(id));
+    const disappearedItem = makeSidebarItem('__disappeared__', 'Disappeared', _dbCache ? disappearedList.length.toLocaleString() : '');
+    disappearedItem.classList.add('stars-sub-item');
+    disappearedItem.title = 'Videos removed from the official lists that are not in any group';
+    disappearedItem.addEventListener('click', () => { activeView = '__disappeared__'; activeGroupIds.clear(); renderStarsView(); });
+    sidebar.appendChild(disappearedItem);
+    if (!_dbCache) ensureArchiveDb();
 
     const divider = document.createElement('hr');
     divider.className = 'stars-sidebar-divider';
@@ -1687,7 +1782,7 @@
       mobileTitle.innerHTML =
         `<span class="stars-main-title">All tagged</span><span class="stars-main-count">${countText}</span>`;
 
-      starsContextList = videosToShow.map(s => starItemToCtx(s.lvlOnly ? s : (stars[s.id] || s)));
+      setStarsContext(videosToShow);
       if (!videosToShow.length) {
         const empty = document.createElement('div');
         empty.id = 'stars-empty';
@@ -1696,11 +1791,45 @@
           : 'No tagged videos yet.<br>Use ⊕ or the braces button on a video to add it to a group.';
         grid.appendChild(empty);
       } else {
-        videosToShow.forEach(star => {
+        fillGrid(grid, videosToShow, star => {
           const info = getVideoInfo(star.id);
           const authorName = info.authorName || star.authorName || '';
           const desc       = info.desc       || star.desc       || '';
-          grid.appendChild(buildStarsGridCard(star, authorName, desc, null));
+          return buildStarsGridCard(star, authorName, desc, null);
+        });
+      }
+    } else if (activeView === '__disappeared__') {
+      // ── Disappeared: archived videos removed from the official lists, minus anything already in a group ──
+      const taggedNow = new Set(groups.flatMap(g => g.videoIds));
+      const baseVideos = disappearedIds()
+        .filter(id => !taggedNow.has(id))
+        .map(id => stars[id]
+          ? { ...stars[id], id }
+          : { id, coverSrc: coverSrcFor(id), authorName: '', desc: '', lvlOnly: true });
+      const videosToShow = activeLvl.size > 0
+        ? baseVideos.filter(s => activeLvl.has(levels[s.id]))
+        : baseVideos;
+
+      const countText = `${videosToShow.length.toLocaleString()} video${videosToShow.length !== 1 ? 's' : ''}`;
+      mainHeader.innerHTML =
+        `<span class="stars-main-title">Disappeared</span><span class="stars-main-count">${countText}</span>`;
+      mobileTitle.innerHTML =
+        `<span class="stars-main-title">Disappeared</span><span class="stars-main-count">${countText}</span>`;
+
+      setStarsContext(videosToShow);
+      if (!videosToShow.length) {
+        const empty = document.createElement('div');
+        empty.id = 'stars-empty';
+        empty.textContent = _dbCache
+          ? (activeLvl.size > 0 ? 'No untagged disappeared videos at this level.' : 'No untagged disappeared videos.')
+          : 'Loading the archive database…';
+        grid.appendChild(empty);
+      } else {
+        fillGrid(grid, videosToShow, star => {
+          const info = getVideoInfo(star.id);
+          const authorName = info.authorName || star.authorName || '';
+          const desc       = info.desc       || star.desc       || '';
+          return buildStarsGridCard(star, authorName, desc, null);
         });
       }
     } else if (activeView === '__ungrouped__') {
@@ -1727,21 +1856,21 @@
       mobileTitle.innerHTML =
         `<span class="stars-main-title">Untagged</span><span class="stars-main-count">${videosToShow.length} video${videosToShow.length !== 1 ? 's' : ''}</span>`;
 
-      starsContextList = videosToShow.map(s => starItemToCtx(s.lvlOnly ? s : (stars[s.id] || s)));
+      setStarsContext(videosToShow);
       if (!videosToShow.length) {
         const empty = document.createElement('div');
         empty.id = 'stars-empty';
         empty.textContent = 'No untagged videos.';
         grid.appendChild(empty);
       } else {
-        videosToShow.forEach(star => {
+        fillGrid(grid, videosToShow, star => {
           const info = getVideoInfo(star.id);
           const authorName = info.authorName || star.authorName || '';
           const desc       = info.desc       || star.desc       || '';
           const onRemove = star.lvlOnly
             ? () => { delete levels[star.id]; saveLevels(); renderStarsView(); }
             : null;
-          grid.appendChild(buildStarsGridCard(star, authorName, desc, onRemove));
+          return buildStarsGridCard(star, authorName, desc, onRemove);
         });
       }
     } else {
@@ -1794,7 +1923,7 @@
       mobileTitle.innerHTML =
         `<span class="stars-main-title">${titleText}</span><span class="stars-main-count">${videosToShow.length} video${videosToShow.length !== 1 ? 's' : ''}</span>`;
 
-      starsContextList = videosToShow.map(s => starItemToCtx(s.lvlOnly ? s : (stars[s.id] || s)));
+      setStarsContext(videosToShow);
       if (!videosToShow.length) {
         const empty = document.createElement('div');
         empty.id = 'stars-empty';
@@ -1803,7 +1932,7 @@
           : 'No videos in this group yet.<br>Star videos and use ⊕ to add them here.';
         grid.appendChild(empty);
       } else {
-        videosToShow.forEach(star => {
+        fillGrid(grid, videosToShow, star => {
           const info = getVideoInfo(star.id);
           const authorName = info.authorName || star.authorName || '';
           const desc       = info.desc       || star.desc       || '';
@@ -1817,7 +1946,7 @@
                 saveGroups(); renderStarsView();
               }
             : null;
-          grid.appendChild(buildStarsGridCard(star, authorName, desc, onRemove));
+          return buildStarsGridCard(star, authorName, desc, onRemove);
         });
       }
     }
@@ -1870,7 +1999,7 @@
         saveGroups(); renderStarsView();
       }
     });
-    if (activeView !== '__tagged__') cover.appendChild(rmBtn);
+    if (activeView !== '__tagged__' && activeView !== '__disappeared__') cover.appendChild(rmBtn);
     cover.appendChild(buildThumbTools(star.id, star.coverSrc, authorName, desc));
 
     card.appendChild(cover);
@@ -2073,6 +2202,7 @@
 
   let playerOpen           = false;
   let playerVideoList      = [];
+  let playerWinStart       = 0;     // index in playerVideoList of the first rendered phone-feed slide
   let playerColumnOffsets  = [];   // one index per column, independently navigable
   let playerBuilding       = false;
   let playerViewEl         = null;  // mobile tab-view element (like starsViewEl)
@@ -2901,9 +3031,13 @@
     // Cap rendered slides on mobile to avoid OOM crash from creating hundreds
     // of <video> elements at once. 60 gives ~30 min of content to scroll through.
     const MOBILE_CAP = 60;
-    const renderList = total > MOBILE_CAP ? playerVideoList.slice(0, MOBILE_CAP) : playerVideoList;
+    // For long lists (tens of thousands) render a window around the starting video, not the first 60
+    const globalStart = Math.max(0, Math.min(playerColumnOffsets[0] || 0, total - 1));
+    const winStart = total > MOBILE_CAP ? Math.max(0, Math.min(globalStart - 10, total - MOBILE_CAP)) : 0;
+    playerWinStart = winStart;
+    const renderList = total > MOBILE_CAP ? playerVideoList.slice(winStart, winStart + MOBILE_CAP) : playerVideoList;
     if (counter && total > MOBILE_CAP) {
-      counter.title = `Showing first ${MOBILE_CAP} of ${total}`;
+      counter.title = `Showing ${renderList.length} of ${total}`;
     }
 
     // ── Single fixed controls layer (stays put while videos scroll) ──────────
@@ -3094,8 +3228,7 @@
       videoEls.push(video);
     });
 
-    const startIdx = playerColumnOffsets[0] || 0;
-    const rendered = renderList.length;
+    const startIdx = globalStart - winStart;
 
     // Size each slide to exactly fill the feed container (resolved after layout).
     // scrollIntoView and IO setup are deferred until heights are applied so that
@@ -3117,10 +3250,10 @@
             const idx = parseInt(entry.target.dataset.idx);
             const vid = videoEls[idx];
             if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
-              playerColumnOffsets[0] = idx;
+              playerColumnOffsets[0] = winStart + idx;
               updateControls(renderList[idx], vid);
               vid.play().catch(() => {});
-              if (counter) counter.textContent = `${idx + 1} / ${rendered}`;
+              if (counter) counter.textContent = `${winStart + idx + 1} / ${total}`;
             } else {
               vid.pause();
             }
@@ -3132,7 +3265,7 @@
         // Kick off the starting video
         updateControls(renderList[startIdx], videoEls[startIdx]);
         videoEls[startIdx]?.play().catch(() => {});
-        if (counter) counter.textContent = `${startIdx + 1} / ${rendered}`;
+        if (counter) counter.textContent = `${winStart + startIdx + 1} / ${total}`;
       } else {
         requestAnimationFrame(setSlideHeights);
       }
@@ -3587,6 +3720,7 @@ render();
   }
 
   function showAuthorTab(id, name) {
+    if (logTabActive) hideLogView();
     if (!openAuthors.some(a => a.id === id)) openAuthors.push({ id, name });
     activeAuthorId = id;
     closeVideoOverlay();
@@ -3628,7 +3762,7 @@ render();
     document.body.classList.remove('sp-author-open');
     syncAuthorTabs();
     if (resumePlayback && isMobilePlayer() && playerOpen && playerViewEl && playerViewEl.style.display !== 'none') {
-      playerViewEl.querySelectorAll('video')[playerColumnOffsets[0] || 0]?.play().catch(() => {});
+      playerViewEl.querySelectorAll('video')[(playerColumnOffsets[0] || 0) - playerWinStart]?.play().catch(() => {});
     }
   }
 
@@ -3676,7 +3810,7 @@ render();
       empty.textContent = 'No downloaded videos found for this author.';
       grid.appendChild(empty);
     }
-    videos.forEach((v, idx) => grid.appendChild(buildAuthorCard(v, idx, videos)));
+    fillGrid(grid, videos, (v, idx) => buildAuthorCard(v, idx, videos));
     authorViewEl.appendChild(grid);
     observeGridPreviews(grid);
   }
@@ -3720,7 +3854,7 @@ render();
         tab = document.createElement('div');
         tab.className = 'author-tab pressable';
         tab.dataset.id = a.id;
-        tab.title = '@' + a.name + ' — double-click to open on TikTok';
+        tab.title = '@' + a.name + ' — double-click to open the profile';
         const label = document.createElement('span');
         label.className = 'author-tab-label';
         label.textContent = '@' + a.name;
@@ -3933,6 +4067,243 @@ render();
     document.addEventListener('keydown', sessionsEscape, true);
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // LIVE LOG — ttpull's log, polled through the Starplayer server (/api/ttpull/logs)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  let logTabActive  = false;
+  let logViewEl     = null;
+  let logBodyEl     = null;
+  let logStatusEl   = null;
+  let logPaused     = false;
+  let logFollow     = true;
+  let logFilter     = '';
+  let logLastRaw    = null;     // last real line seen, used to find where new lines start
+  let logTimer      = null;
+  let logPollGen    = 0;
+  const logEntries  = [];       // { raw, time, level, msg, marker }
+  const logLevels   = { info: true, warn: true, error: true };
+  const LOG_KEEP    = 2000;
+
+  function parseLogLine(raw) {
+    const m = /^\[([^\]]+)\] \[(\w+)\] ([\s\S]*)$/.exec(raw);
+    if (!m) return { raw, time: '', level: 'info', msg: raw };
+    const d = new Date(m[1]);
+    const time = isNaN(d) ? m[1] : d.toLocaleTimeString([], { hour12: false });
+    return { raw, time, level: (m[2] === 'warn' || m[2] === 'error') ? m[2] : 'info', msg: m[3] };
+  }
+
+  function logEntryVisible(e) {
+    if (e.marker) return true;
+    if (!logLevels[e.level]) return false;
+    return !logFilter || e.msg.toLowerCase().includes(logFilter);
+  }
+
+  function logLineEl(e) {
+    const row = document.createElement('div');
+    if (e.marker) {
+      row.className = 'log-line log-marker';
+      row.textContent = e.msg;
+      return row;
+    }
+    row.className = 'log-line lvl-' + e.level;
+    const ts = document.createElement('span');
+    ts.className = 'log-ts';
+    ts.textContent = e.time;
+    const msg = document.createElement('span');
+    msg.textContent = e.msg;
+    row.append(ts, msg);
+    return row;
+  }
+
+  function scrollLogToEnd() { if (logBodyEl) logBodyEl.scrollTop = logBodyEl.scrollHeight; }
+
+  function renderLogAll() {
+    if (!logBodyEl) return;
+    logBodyEl.innerHTML = '';
+    const frag = document.createDocumentFragment();
+    logEntries.forEach(e => { if (logEntryVisible(e)) frag.appendChild(logLineEl(e)); });
+    logBodyEl.appendChild(frag);
+    if (logFollow) scrollLogToEnd();
+  }
+
+  // Take the lines ttpull returned and append only the ones we haven't shown yet
+  function ingestLog(lines) {
+    let start = 0;
+    const fresh = [];
+    if (logLastRaw !== null) {
+      const i = lines.lastIndexOf(logLastRaw);
+      if (i >= 0) start = i + 1;
+      else if (lines.length) fresh.push({ marker: true, msg: '… log restarted or lines were missed …' });
+    }
+    lines.slice(start).forEach(raw => fresh.push(parseLogLine(raw)));
+    if (!fresh.length) return;
+    if (lines.length) logLastRaw = lines[lines.length - 1];
+
+    fresh.forEach(e => logEntries.push(e));
+    while (logEntries.length > LOG_KEEP) logEntries.shift();
+    if (!logBodyEl) return;
+    fresh.forEach(e => { if (logEntryVisible(e)) logBodyEl.appendChild(logLineEl(e)); });
+    while (logBodyEl.childElementCount > LOG_KEEP) logBodyEl.firstChild.remove();
+    if (logFollow) scrollLogToEnd();
+  }
+
+  function setLogStatus(kind, text) {
+    if (!logStatusEl) return;
+    logStatusEl.className = 'log-status ' + kind;
+    logStatusEl.textContent = text;
+  }
+
+  async function pollLog() {
+    const gen = logPollGen;
+    try {
+      const r = await fetch('/api/ttpull/logs', { cache: 'no-store' });
+      const d = await r.json();
+      if (gen !== logPollGen) return;
+      if (d.ok) {
+        ingestLog(d.lines);
+        const st = d.status;
+        setLogStatus('ok', st ? 'ttpull · ' + (st.running ? 'running' + (st.phase ? ': ' + st.phase : '') : 'idle') : 'ttpull · connected');
+      } else {
+        setLogStatus('error', d.error || 'ttpull unreachable');
+      }
+    } catch (_) {
+      if (gen !== logPollGen) return;
+      setLogStatus('error', 'Starplayer server unreachable (the live log needs the server)');
+    }
+    if (gen === logPollGen && logTabActive && !logPaused) logTimer = setTimeout(pollLog, 2000);
+  }
+
+  function startLogPolling() {
+    stopLogPolling();
+    if (!logPaused) pollLog();
+  }
+
+  function stopLogPolling() {
+    logPollGen++;
+    clearTimeout(logTimer);
+    logTimer = null;
+  }
+
+  function buildLogView() {
+    logViewEl = document.createElement('div');
+    logViewEl.id = 'log-view';
+
+    const head = document.createElement('div');
+    head.id = 'log-head';
+    const title = document.createElement('span');
+    title.className = 'stars-main-title';
+    title.textContent = 'ttpull log';
+    logStatusEl = document.createElement('span');
+    logStatusEl.className = 'log-status';
+    logStatusEl.textContent = 'connecting…';
+
+    const controls = document.createElement('div');
+    controls.className = 'log-controls';
+    const filter = document.createElement('input');
+    filter.type = 'search';
+    filter.className = 'log-filter';
+    filter.placeholder = 'Filter';
+    filter.addEventListener('input', () => { logFilter = filter.value.trim().toLowerCase(); renderLogAll(); });
+    controls.appendChild(filter);
+
+    ['info', 'warn', 'error'].forEach(level => {
+      const b = document.createElement('button');
+      b.className = 'log-btn log-level lvl-' + level + (logLevels[level] ? ' on' : '');
+      b.textContent = level;
+      b.title = 'Show or hide ' + level + ' lines';
+      b.addEventListener('click', () => {
+        logLevels[level] = !logLevels[level];
+        b.classList.toggle('on', logLevels[level]);
+        renderLogAll();
+      });
+      controls.appendChild(b);
+    });
+
+    const follow = document.createElement('button');
+    follow.className = 'log-btn log-follow' + (logFollow ? ' on' : '');
+    follow.textContent = '↓ Follow';
+    follow.title = 'Keep the newest line in view';
+    follow.addEventListener('click', () => {
+      logFollow = !logFollow;
+      follow.classList.toggle('on', logFollow);
+      if (logFollow) scrollLogToEnd();
+    });
+    controls.appendChild(follow);
+
+    const pause = document.createElement('button');
+    pause.className = 'log-btn log-pause';
+    const paintPause = () => {
+      pause.textContent = logPaused ? '▶ Resume' : '⏸ Pause';
+      pause.classList.toggle('on', logPaused);
+    };
+    paintPause();
+    pause.addEventListener('click', () => {
+      logPaused = !logPaused;
+      paintPause();
+      if (logPaused) { stopLogPolling(); setLogStatus('paused', 'paused'); }
+      else startLogPolling();
+    });
+    controls.appendChild(pause);
+
+    const clear = document.createElement('button');
+    clear.className = 'log-btn';
+    clear.textContent = 'Clear';
+    clear.title = 'Clear the view (the log on the server is not affected)';
+    clear.addEventListener('click', () => { logEntries.length = 0; if (logBodyEl) logBodyEl.innerHTML = ''; });
+    controls.appendChild(clear);
+
+    head.append(title, logStatusEl, controls);
+
+    logBodyEl = document.createElement('div');
+    logBodyEl.id = 'log-body';
+    // Scrolling up turns Follow off; scrolling back to the bottom turns it on again
+    logBodyEl.addEventListener('scroll', () => {
+      const atEnd = logBodyEl.scrollHeight - logBodyEl.scrollTop - logBodyEl.clientHeight < 24;
+      if (atEnd !== logFollow) {
+        logFollow = atEnd;
+        follow.classList.toggle('on', logFollow);
+      }
+    });
+
+    logViewEl.append(head, logBodyEl);
+    const main = document.querySelector('main');
+    if (main) main.parentNode.insertBefore(logViewEl, main);
+    else document.body.appendChild(logViewEl);
+    renderLogAll();
+  }
+
+  function showLogTab() {
+    if (isMobilePlayer() || logTabActive) return;
+    if (activeAuthorId) hideAuthorView();
+    if (starsTabActive) {
+      starsTabActive = false;
+      if (starsViewEl) { releaseGridPreviews(starsViewEl); starsViewEl.style.display = 'none'; }
+      document.querySelector('nav .stars-tab')?.classList.remove('active');
+    }
+    closeVideoOverlay();
+    closePanel();
+    logTabActive = true;
+    document.querySelector('main')?.style.setProperty('display', 'none');
+    toggleBtn.style.display = 'none';
+    document.body.classList.add('sp-log-open');
+    document.querySelector('nav .log-tab')?.classList.add('active');
+    if (!logViewEl) buildLogView();
+    logViewEl.style.display = 'flex';
+    if (logFollow) scrollLogToEnd();
+    startLogPolling();
+  }
+
+  // Hide only; the caller decides what to show next
+  function hideLogView() {
+    if (!logTabActive) return;
+    logTabActive = false;
+    stopLogPolling();
+    if (logViewEl) logViewEl.style.display = 'none';
+    document.body.classList.remove('sp-log-open');
+    document.querySelector('nav .log-tab')?.classList.remove('active');
+  }
+
   function makeNavTab(className, svgPath, label, onClick) {
     const tab = document.createElement('div');
     tab.className = className + ' pressable';
@@ -4001,6 +4372,17 @@ render();
       }
     }
 
+    // Live log tab — last in the nav, right-aligned so it sits against the search field
+    if (!nav.querySelector('.log-tab')) {
+      const tab = makeNavTab('log-tab',
+        '<path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V8h16v10zm-2-1h-6v-2h6v2zM7.5 17l-1.41-1.41L8.67 13l-2.58-2.59L7.5 9l4 4-4 4z"/>',
+        'ttpull live log',
+        () => showLogTab()
+      );
+      if (logTabActive) tab.classList.add('active');
+      nav.appendChild(tab);
+    }
+
     syncAuthorTabs();
   }
 
@@ -4010,8 +4392,8 @@ render();
     nav.addEventListener('click', e => {
       const tab = e.target.closest('.pressable');
       if (!tab || playerBuilding) return; // ignore clicks while collecting video IDs
-      const isOwnTab = tab.classList.contains('stars-tab') || tab.classList.contains('author-tab');
-      if (!isOwnTab && (starsTabActive || activeAuthorId)) showMainContent();
+      const isOwnTab = tab.classList.contains('stars-tab') || tab.classList.contains('author-tab') || tab.classList.contains('log-tab');
+      if (!isOwnTab && (starsTabActive || activeAuthorId || logTabActive)) showMainContent();
       if (!tab.classList.contains('player-tab') && playerOpen && isMobilePlayer()) closePlayer();
     });
   }
@@ -4048,7 +4430,20 @@ render();
       injectNavTabs();
       watchNavClicks();
       ensureArchiveDb();
+      showDefaultStarsView();
     }
+  }
+
+  // Desktop opens on the Stars page. Wait for the app's <main> so the view can be inserted next to it.
+  let defaultViewShown = false;
+  function showDefaultStarsView(tries = 0) {
+    if (defaultViewShown) return;
+    if (!document.querySelector('main') || !document.querySelector('nav .stars-tab')) {
+      if (tries < 50) setTimeout(() => showDefaultStarsView(tries + 1), 100);
+      return;
+    }
+    defaultViewShown = true;
+    if (!starsTabActive && !logTabActive && !activeAuthorId) showStarsTab();
   }
 
   // ── Expose live API for pop-out windows ──────────────────────────────────
@@ -4136,7 +4531,7 @@ render();
       .star-panel-desc   { font-size:11px; color:#777; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
       /* ── Stars & Player nav tabs ── */
-      nav .stars-tab, nav .player-tab, nav .session-tab {
+      nav .stars-tab, nav .player-tab, nav .session-tab, nav .log-tab {
         display: flex; align-items: center;
         cursor: pointer; border-bottom: 3px solid transparent; color: inherit;
         white-space: nowrap;
@@ -4145,23 +4540,23 @@ render();
       /* ── Icon-only top nav (labels hidden; title tooltips added in JS) ── */
       nav { margin-left: 20px !important; }
       nav .likes, nav .bookmarked, nav .following, nav .readme,
-      nav .stars-tab, nav .player-tab, nav .session-tab {
+      nav .stars-tab, nav .player-tab, nav .session-tab, nav .log-tab {
         font-size: 0 !important; gap: 0 !important;
         margin: 3.3px 2px 0 !important; padding: 0 14px !important;
         justify-content: center; border-radius: 6px 6px 0 0;
         transition: color .15s, background .15s;
       }
       nav .likes svg, nav .bookmarked svg, nav .following svg, nav .readme svg,
-      nav .stars-tab svg, nav .player-tab svg, nav .session-tab svg {
+      nav .stars-tab svg, nav .player-tab svg, nav .session-tab svg, nav .log-tab svg {
         width: 20px !important; height: 20px !important; margin: 0 !important;
       }
       nav .likes:not(.active):hover, nav .bookmarked:not(.active):hover,
       nav .following:not(.active):hover, nav .readme:not(.active):hover,
-      nav .stars-tab:not(.active):hover, nav .player-tab:not(.active):hover, nav .session-tab:not(.menu-open):hover {
+      nav .stars-tab:not(.active):hover, nav .player-tab:not(.active):hover, nav .session-tab:not(.menu-open):hover, nav .log-tab:not(.active):hover {
         color: var(--active, #d7d7d7); background: rgba(255,255,255,.05);
       }
       nav .likes.active, nav .bookmarked.active, nav .following.active, nav .readme.active,
-      nav .stars-tab.active, nav .player-tab.active, nav .session-tab.menu-open {
+      nav .stars-tab.active, nav .player-tab.active, nav .session-tab.menu-open, nav .log-tab.active {
         color: var(--active, #d7d7d7); background: rgba(255,255,255,.09);
         border-bottom: 3px solid var(--active, #d7d7d7); cursor: default;
       }
@@ -4182,6 +4577,14 @@ render();
         color: var(--active, #d7d7d7); background: rgba(255,255,255,.09);
         border-bottom: 3px solid var(--active, #d7d7d7); cursor: default;
       }
+      nav .log-tab { margin-left: auto !important; }
+      nav .stars-tab { order: -1; }
+      /* the app keeps its own tab marked active underneath; hide that highlight while Stars is showing */
+      nav:has(.stars-tab.active) .pressable.active:not(.stars-tab) {
+        color: var(--inactive, rgb(160,160,160)) !important;
+        background: none !important; border-bottom-color: transparent !important;
+      }
+      body.sp-log-open nav .pressable.active:not(.log-tab),
       body.sp-author-open nav .pressable.active:not(.author-tab) {
         color: var(--inactive, rgb(160,160,160)) !important;
         background: none !important; border-bottom-color: transparent !important;
@@ -4205,6 +4608,27 @@ render();
         header:has(> nav) nav .session-tab { right: calc(var(--left-padding, 20px) + 112px); }
       }
 
+      #log-view { display: none; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+      #log-head { display: flex; align-items: center; gap: 12px; padding: 12px 18px 10px; flex-shrink: 0; border-bottom: 1px solid #333; }
+      .log-status { font-size: 12px; color: #888; display: flex; align-items: center; gap: 6px; min-width: 0; }
+      .log-status::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: #666; flex-shrink: 0; }
+      .log-status.ok::before { background: #4caf50; }
+      .log-status.error { color: #ff8a80; }
+      .log-status.error::before { background: #f44336; }
+      .log-status.paused::before { background: #e5c07b; }
+      .log-controls { margin-left: auto; display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+      .log-filter { width: 150px; height: 24px; padding: 0 8px; background: #1e1e1e; border: 1px solid #444; border-radius: 12px; color: #ddd; font-size: 12px; outline: none; }
+      .log-btn { background: rgba(255,255,255,.06); border: 1px solid #444; color: #999; border-radius: 12px; padding: 2px 10px; font-size: 12px; line-height: 18px; cursor: pointer; }
+      .log-btn:hover { background: rgba(255,255,255,.14); color: #fff; }
+      .log-btn.on { background: rgba(255,255,255,.18); border-color: #888; color: #fff; }
+      .log-level.lvl-warn.on { color: #e5c07b; border-color: #e5c07b; }
+      .log-level.lvl-error.on { color: #ff6b6b; border-color: #ff6b6b; }
+      #log-body { flex: 1; overflow-y: auto; padding: 8px 18px 14px; background: #121212; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .log-line { white-space: pre-wrap; overflow-wrap: anywhere; color: #c8c8c8; }
+      .log-line.lvl-warn { color: #e5c07b; }
+      .log-line.lvl-error { color: #ff6b6b; }
+      .log-line.log-marker { color: #777; font-style: italic; }
+      .log-ts { color: #6d6d6d; margin-right: 10px; }
       #sessions-menu {
         position: fixed; z-index: 10000; width: 300px; max-height: 70vh;
         display: flex; flex-direction: column; overflow: hidden;
@@ -4270,6 +4694,8 @@ render();
       /* ── Stars view ── */
       #stars-view { display:none; flex-direction:row; flex:1; min-height:0; overflow:hidden; }
       #stars-sidebar { width:200px; flex-shrink:0; background:#1a1a1a; border-right:1px solid #3a3a3a; display:flex; flex-direction:column; overflow-y:auto; padding:8px 0; }
+      .stars-group-item.stars-sub-item { padding-left: 26px; }
+      .grid-sentinel { grid-column: 1 / -1; height: 1px; }
       .stars-sidebar-divider { border:none; border-top:1px solid #3a3a3a; margin:6px 0; }
       .stars-group-item { display:flex; align-items:center; justify-content:space-between; padding:7px 14px; cursor:pointer; font-size:13px; transition:background .1s; gap:6px; }
       .stars-group-item:hover { background:#262626; }
