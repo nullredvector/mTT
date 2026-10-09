@@ -1313,6 +1313,7 @@
     if (items.length > GRID_CHUNK) grid.appendChild(sentinel);
     addChunk();
     if (items.length <= GRID_CHUNK) return;
+    grid._fillTo = target => { while (next < items.length && next < target) addChunk(); };
     grid._fillIO = new IntersectionObserver(entries => {
       if (entries.some(e => e.isIntersecting)) pump();
     }, { root: grid, rootMargin: '800px' });
@@ -1378,6 +1379,7 @@
   let mobileStarsLvlOpen = false;     // mobile: whether inline lvl strip is visible
   let mobileStarsGroupsOpen = false;  // mobile: whether group picker panel is expanded
   let groupSortOrder   = 'alpha';     // 'alpha' | 'count'
+  let starsViewKey = '';            // which view/filters the stars grid last showed
   let starsContextItems = [];       // items of the rendered grid, in order
   let starsContextCache = null;     // player contexts built from them when a video is opened (lists can be huge)
   function setStarsContext(items) { starsContextItems = items; starsContextCache = null; }
@@ -1430,6 +1432,14 @@
 
   function renderStarsView() {
     if (!starsViewEl) return;
+    // Re-rendering after a tag/star/level change must not throw you back to the top of a long list:
+    // remember how far the same view was loaded and scrolled
+    const viewKey = [activeView, [...activeGroupIds].sort().join(','), [...activeLvl].sort().join(',')].join('|');
+    const prevGrid = starsViewEl.querySelector('#stars-grid');
+    const keep = (prevGrid && starsViewKey === viewKey)
+      ? { loaded: prevGrid.querySelectorAll('.stars-grid-card').length, scroll: prevGrid.scrollTop }
+      : null;
+    starsViewKey = viewKey;
     releaseGridPreviews(starsViewEl);
     starsViewEl.innerHTML = '';
 
@@ -1504,11 +1514,9 @@
     ungroupedItem.addEventListener('click', () => { activeView = '__ungrouped__'; activeGroupIds.clear(); renderStarsView(); });
     sidebar.appendChild(ungroupedItem);
 
-    // Disappeared (under Untagged): videos removed from the official lists that are in no group
-    const disappearedList = disappearedIds().filter(id => !taggedIds.has(id));
-    const disappearedItem = makeSidebarItem('__disappeared__', 'Disappeared', _dbCache ? disappearedList.length.toLocaleString() : '');
-    disappearedItem.classList.add('stars-sub-item');
-    disappearedItem.title = 'Videos removed from the official lists that are not in any group';
+    // Disappeared: every archived video removed from the official lists, tagged or not
+    const disappearedItem = makeSidebarItem('__disappeared__', 'Disappeared', _dbCache ? disappearedIds().length.toLocaleString() : '');
+    disappearedItem.title = 'Videos removed from the official lists';
     disappearedItem.addEventListener('click', () => { activeView = '__disappeared__'; activeGroupIds.clear(); renderStarsView(); });
     sidebar.appendChild(disappearedItem);
     if (!_dbCache) ensureArchiveDb();
@@ -1827,10 +1835,8 @@
         });
       }
     } else if (activeView === '__disappeared__') {
-      // ── Disappeared: archived videos removed from the official lists, minus anything already in a group ──
-      const taggedNow = new Set(groups.flatMap(g => g.videoIds));
+      // ── Disappeared: every archived video removed from the official lists (tagging does not hide it) ──
       const baseVideos = disappearedIds()
-        .filter(id => !taggedNow.has(id))
         .map(id => stars[id]
           ? { ...stars[id], id }
           : { id, coverSrc: coverSrcFor(id), authorName: '', desc: '', lvlOnly: true });
@@ -1849,7 +1855,7 @@
         const empty = document.createElement('div');
         empty.id = 'stars-empty';
         empty.textContent = _dbCache
-          ? (activeLvl.size > 0 ? 'No untagged disappeared videos at this level.' : 'No untagged disappeared videos.')
+          ? (activeLvl.size > 0 ? 'No disappeared videos at this level.' : 'No disappeared videos.')
           : 'Loading the archive database…';
         grid.appendChild(empty);
       } else {
@@ -1988,6 +1994,10 @@
 
     mainArea.appendChild(grid);
     starsViewEl.appendChild(mainArea);
+    if (keep) {
+      if (grid._fillTo) grid._fillTo(keep.loaded);
+      grid.scrollTop = keep.scroll;
+    }
     if (isVideoGrid) observeGridPreviews(grid);
   }
 
@@ -4725,7 +4735,6 @@ render();
       /* ── Stars view ── */
       #stars-view { display:none; flex-direction:row; flex:1; min-height:0; overflow:hidden; }
       #stars-sidebar { width:200px; flex-shrink:0; background:#1a1a1a; border-right:1px solid #3a3a3a; display:flex; flex-direction:column; overflow-y:auto; padding:8px 0; }
-      .stars-group-item.stars-sub-item { padding-left: 26px; }
       .grid-sentinel { grid-column: 1 / -1; height: 1px; }
       .stars-sidebar-divider { border:none; border-top:1px solid #3a3a3a; margin:6px 0; }
       .stars-group-item { display:flex; align-items:center; justify-content:space-between; padding:7px 14px; cursor:pointer; font-size:13px; transition:background .1s; gap:6px; }
