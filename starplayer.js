@@ -3809,7 +3809,8 @@ render();
     if (i >= 0) openAuthors.splice(i, 1);
     if (activeAuthorId === id) {
       hideAuthorView();
-      if (!isMobilePlayer()) showMainContent();
+      // Closing the tab you were on returns to the Stars tab (on a phone the view just closes)
+      if (!isMobilePlayer()) showStarsTab();
     }
     syncAuthorTabs();
     autosaveSession();
@@ -3992,7 +3993,7 @@ render();
     currentSessionId = null;
     if (activeAuthorId) {
       hideAuthorView();
-      if (!isMobilePlayer()) showMainContent();
+      if (!isMobilePlayer()) showStarsTab();
     }
     syncAuthorTabs();
     closeSessionsMenu();
