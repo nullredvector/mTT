@@ -1405,20 +1405,30 @@
       saveThumbSize(key, px);
     });
 
-    const sort = document.createElement('select');
+    // One button per sort order, the selected one highlighted
+    const sort = document.createElement('div');
     sort.className = 'grid-sort';
+    sort.setAttribute('role', 'group');
     sort.title = 'Sort order';
     const current = getSort(page);
     sortOptions(page).forEach(([value, label]) => {
-      const o = document.createElement('option');
-      o.value = value; o.textContent = label; o.selected = value === current;
-      sort.appendChild(o);
-    });
-    sort.addEventListener('change', () => {
-      saveSort(page, sort.value);
-      if (page === 'stars') renderStarsView();
-      else if (page === 'author') renderAuthorView();
-      else if (page === 'autotag') renderAutotagView();
+      const b = document.createElement('button');
+      b.className = 'grid-sort-btn' + (value === current ? ' on' : '');
+      b.textContent = label;
+      b.setAttribute('aria-pressed', value === current ? 'true' : 'false');
+      b.addEventListener('click', e => {
+        e.stopPropagation();
+        if (getSort(page) === value) return;
+        saveSort(page, value);
+        sort.querySelectorAll('.grid-sort-btn').forEach(x => {
+          x.classList.toggle('on', x === b);
+          x.setAttribute('aria-pressed', x === b ? 'true' : 'false');
+        });
+        if (page === 'stars') renderStarsView();
+        else if (page === 'author') renderAuthorView();
+        else if (page === 'autotag') renderAutotagView();
+      });
+      sort.appendChild(b);
     });
 
     wrap.append(play, size, sort);
@@ -5067,8 +5077,11 @@ render();
       .grid-playall { background: rgba(255,255,255,.08); border: 1px solid #444; color: #ccc; border-radius: 12px; padding: 1px 10px; font-size: 12px; line-height: 18px; cursor: pointer; }
       .grid-playall:hover { background: rgba(255,255,255,.16); color: #fff; }
       .grid-playall.on { background: rgba(255,255,255,.2); border-color: #888; color: #fff; }
-      .grid-sort { height: 24px; max-width: 96px; padding: 0 4px; background: #1e1e1e; border: 1px solid #444; border-radius: 12px; color: #ccc; font-size: 12px; outline: none; cursor: pointer; }
-      .grid-sort:hover { border-color: #777; color: #fff; }
+      .grid-sort { display: inline-flex; flex-shrink: 0; border: 1px solid #444; border-radius: 12px; overflow: hidden; }
+      .grid-sort-btn { background: transparent; border: none; border-left: 1px solid #444; color: #999; font-size: 12px; line-height: 22px; padding: 0 9px; cursor: pointer; white-space: nowrap; }
+      .grid-sort-btn:first-child { border-left: none; }
+      .grid-sort-btn:hover { background: rgba(255,255,255,.1); color: #fff; }
+      .grid-sort-btn.on { background: rgba(255,255,255,.2); color: #fff; }
       .grid-size { width: 110px; height: 16px; margin: 0; accent-color: #aaa; cursor: pointer; }
       .preview-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
       .stars-grid-cover.is-playing::after { display: none; }
@@ -5109,7 +5122,10 @@ render();
         #autotag-head { padding: 8px 10px; }
         #author-view { position: fixed; inset: 0; bottom: calc(72px + env(safe-area-inset-bottom, 0px)); z-index: 3500; background: #0d0d0d; }
         .author-view-close { display: block; flex-shrink: 0; }
-        #author-view-header { overflow: hidden; }
+        /* the controls (play, size, sort buttons) get their own row under the title */
+        #author-view-header { flex-wrap: wrap; align-items: center; row-gap: 6px; }
+        #author-view-header .author-view-close { order: 1; margin-left: auto; }
+        #author-view-header .grid-controls { order: 2; flex: 0 0 100%; }
         #author-view-header .stars-main-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         #author-view-header .stars-main-count, #author-view-header .grid-controls { flex-shrink: 0; }
         #author-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; padding: 8px; }
@@ -5460,9 +5476,11 @@ render();
         }
         #stars-mobile-title .stars-main-count { font-size: 12px; color: #666; flex-shrink: 0; }
         #stars-mobile-header .grid-controls { pointer-events: auto; flex-shrink: 0; }
+        #stars-mobile-header > :first-child { flex-wrap: wrap; row-gap: 6px; }
+        #stars-mobile-title { flex: 1 1 100%; }
         .grid-size { width: 56px; }
         .grid-controls { gap: 5px; }
-        .grid-sort { max-width: 72px; font-size: 11px; padding: 0 2px; }
+        .grid-sort-btn { font-size: 11px; padding: 0 6px; }
 
         /* ── Filter buttons: fixed bottom-right stack (like player controls) ── */
         #stars-mobile-filters {
