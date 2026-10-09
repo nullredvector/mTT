@@ -91,6 +91,48 @@ http.createServer((req, res) => {
     return;
   }
 
+  // ── autotagTT review API ───────────────────────────────────────────────────
+  // GET  /api/autotag?tag=braces                      → pending suggestions + recorded decisions
+  // POST /api/autotag/feedback {tag,id,decision,change?} → records one explicit decision
+  // Never edits groups. Like every other endpoint here it has no login of its own (the server is
+  // meant to sit behind the LAN/reverse proxy); state-changing calls additionally have to be
+  // same-origin JSON so another website can't drive them from the user's browser.
+  if (pathname === '/api/autotag' && req.method === 'GET') {
+    const tag = String(new URLSearchParams(url.parse(req.url).query || '').get('tag') || 'braces').toLowerCase();
+    const out = dbStars.loadAutotag(tag);
+    const body = JSON.stringify(out);
+    res.writeHead(out.error ? 400 : 200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Content-Length': Buffer.byteLength(body) });
+    res.end(body);
+    return;
+  }
+  if (pathname === '/api/autotag/feedback') {
+    if (req.method !== 'POST') { res.writeHead(405); res.end('Method not allowed'); return; }
+    const sendJson = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+    const origin = req.headers['origin'];
+    let sameOrigin = true;
+    if (origin) { try { sameOrigin = new URL(origin).host === req.headers['host']; } catch (_) { sameOrigin = false; } }
+    if (!sameOrigin) return sendJson(403, { error: 'cross-origin request refused' });
+    if (!/^application\/json/i.test(req.headers['content-type'] || '')) return sendJson(415, { error: 'JSON required' });
+    let size = 0, chunks = [], tooBig = false;
+    req.on('data', c => { size += c.length; if (size > 4096) tooBig = true; else chunks.push(c); });
+    req.on('end', () => {
+      if (tooBig) return sendJson(413, { error: 'body too large' });
+      let d;
+      try { d = JSON.parse(Buffer.concat(chunks).toString()); } catch (_) { return sendJson(400, { error: 'Invalid JSON' }); }
+      if (!d || typeof d !== 'object' || Array.isArray(d)) return sendJson(400, { error: 'Invalid JSON' });
+      let r;
+      try {
+        r = dbStars.recordFeedback(
+          typeof d.tag === 'string' ? d.tag.toLowerCase() : '',
+          typeof d.id === 'string' ? d.id : '',
+          d.decision, d.change === true);
+      } catch (_) { r = { code: 500, error: 'could not save feedback' }; }  // no paths or details in the response
+      const { code, ...rest } = r;
+      sendJson(code, rest);
+    });
+    return;
+  }
+
   // ── Tab sessions API ───────────────────────────────────────────────────────
   if (pathname === '/api/sessions') {
     if (req.method === 'GET') {
