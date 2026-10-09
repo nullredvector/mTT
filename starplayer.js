@@ -357,6 +357,7 @@
         .then(d => {
           _dbCache = d;
           if (starsTabActive) renderStarsView();
+          if (autotagTabActive) renderAutotagView();
           if (panelOpen) renderPanel();
           return d;
         })
@@ -1222,6 +1223,47 @@
     grid.style.setProperty('--tool', Math.max(20, Math.min(32, Math.round(px * 0.15))) + 'px');
   }
 
+  // ── Sort order for the stars, username and review grids ──────────────────
+  // Latest/Oldest use the video's post date, Popular its like count. The review page also offers
+  // "Best match", which keeps the order the model ranked its suggestions in.
+  function sortOptions(page) {
+    const opts = [['latest', 'Latest'], ['popular', 'Popular'], ['oldest', 'Oldest']];
+    return page === 'autotag' ? [['score', 'Best match'], ...opts] : opts;
+  }
+
+  function getSort(page) {
+    const fallback = page === 'autotag' ? 'score' : 'latest';
+    try {
+      const v = localStorage.getItem('sp_sort_' + page);
+      if (sortOptions(page).some(([k]) => k === v)) return v;
+    } catch (_) {}
+    return fallback;
+  }
+
+  function saveSort(page, mode) {
+    try { localStorage.setItem('sp_sort_' + page, mode); } catch (_) {}
+  }
+
+  // Returns a sorted copy of items ({ id, ... }). Videos with no data in the archive database go last.
+  function sortVideos(items, page) {
+    const mode = getSort(page);
+    const d = _dbCache;
+    if (mode === 'score' || !d) return items;
+    const keyed = items.map((item, i) => {
+      const v = d.videos[item.id];
+      return { item, i, known: Boolean(v), t: v ? (v.createTime || 0) : 0, likes: v ? (v.diggCount || 0) : 0, plays: v ? (v.playCount || 0) : 0 };
+    });
+    keyed.sort((a, b) => {
+      if (a.known !== b.known) return a.known ? -1 : 1;
+      let r;
+      if (mode === 'oldest') r = a.t - b.t;
+      else if (mode === 'popular') r = (b.likes - a.likes) || (b.plays - a.plays) || (b.t - a.t);
+      else r = b.t - a.t;
+      return r || a.i - b.i;
+    });
+    return keyed.map(k => k.item);
+  }
+
   // Mark a thumbnail as previewable and add mouse-over playback
   function attachPreview(cover, videoPath) {
     if (!videoPath || !/\/videos\/.+\.mp4$/.test(videoPath)) return;
@@ -1363,7 +1405,23 @@
       saveThumbSize(key, px);
     });
 
-    wrap.append(play, size);
+    const sort = document.createElement('select');
+    sort.className = 'grid-sort';
+    sort.title = 'Sort order';
+    const current = getSort(page);
+    sortOptions(page).forEach(([value, label]) => {
+      const o = document.createElement('option');
+      o.value = value; o.textContent = label; o.selected = value === current;
+      sort.appendChild(o);
+    });
+    sort.addEventListener('change', () => {
+      saveSort(page, sort.value);
+      if (page === 'stars') renderStarsView();
+      else if (page === 'author') renderAuthorView();
+      else if (page === 'autotag') renderAutotagView();
+    });
+
+    wrap.append(play, size, sort);
     return wrap;
   }
 
@@ -1437,7 +1495,7 @@
     if (!starsViewEl) return;
     // Re-rendering after a tag/star/level change must not throw you back to the top of a long list:
     // remember how far the same view was loaded and scrolled
-    const viewKey = [activeView, [...activeGroupIds].sort().join(','), [...activeLvl].sort().join(',')].join('|');
+    const viewKey = [activeView, [...activeGroupIds].sort().join(','), [...activeLvl].sort().join(','), getSort('stars')].join('|');
     const prevGrid = starsViewEl.querySelector('#stars-grid');
     const keep = (prevGrid && starsViewKey === viewKey)
       ? { loaded: prevGrid.querySelectorAll('.stars-grid-card').length, scroll: prevGrid.scrollTop }
@@ -1811,9 +1869,9 @@
           ? { ...stars[id], id }
           : { id, coverSrc: coverSrcFor(id), authorName: '', desc: '', lvlOnly: true });
       }));
-      const videosToShow = activeLvl.size > 0
+      const videosToShow = sortVideos(activeLvl.size > 0
         ? baseVideos.filter(s => activeLvl.has(levels[s.id]))
-        : baseVideos;
+        : baseVideos, 'stars');
 
       const countText = `${videosToShow.length} video${videosToShow.length !== 1 ? 's' : ''}`;
       mainHeader.innerHTML =
@@ -1843,9 +1901,9 @@
         .map(id => stars[id]
           ? { ...stars[id], id }
           : { id, coverSrc: coverSrcFor(id), authorName: '', desc: '', lvlOnly: true });
-      const videosToShow = activeLvl.size > 0
+      const videosToShow = sortVideos(activeLvl.size > 0
         ? baseVideos.filter(s => activeLvl.has(levels[s.id]))
-        : baseVideos;
+        : baseVideos, 'stars');
 
       const countText = `${videosToShow.length.toLocaleString()} video${videosToShow.length !== 1 ? 's' : ''}`;
       mainHeader.innerHTML =
@@ -1883,9 +1941,9 @@
           authorName: '', desc: '', lvlOnly: true
         }));
       const baseVideos = [...ungroupedStars, ...lvlOnlyVideos];
-      const videosToShow = activeLvl.size > 0
+      const videosToShow = sortVideos(activeLvl.size > 0
         ? baseVideos.filter(s => activeLvl.has(levels[s.id]))
-        : baseVideos;
+        : baseVideos, 'stars');
 
       mainHeader.innerHTML =
         `<span class="stars-main-title">Untagged</span>` +
@@ -1943,9 +2001,9 @@
         });
       }
 
-      const videosToShow = activeLvl.size > 0
+      const videosToShow = sortVideos(activeLvl.size > 0
         ? baseVideos.filter(s => activeLvl.has(levels[s.id]))
-        : baseVideos;
+        : baseVideos, 'stars');
 
       let titleText;
       if (isAll) titleText = 'All Stars';
@@ -3173,12 +3231,15 @@
     muteBtn.className = 'player-ctrl-btn player-mute-btn';
     muteBtn.innerHTML = muteIcon(true);
     muteBtn.title = 'Unmute';
+    const paintMute = () => {
+      muteBtn.innerHTML = muteIcon(currentMuted);
+      muteBtn.title = currentMuted ? 'Unmute' : 'Mute';
+    };
     muteBtn.addEventListener('click', e => {
       e.stopPropagation();
       currentMuted = !currentMuted;
       if (currentVid) currentVid.muted = currentMuted;
-      muteBtn.innerHTML = muteIcon(currentMuted);
-      muteBtn.title = currentMuted ? 'Unmute' : 'Mute';
+      paintMute();
     });
 
     rightCenter.appendChild(thumbUpBtn);
@@ -3243,6 +3304,57 @@
 
     const videoEls = [];
 
+    // Start a video and cope with browsers refusing autoplay (common on phones):
+    // - sound refused (e.g. after you unmuted, the next video has no tap of its own): play muted instead
+    //   and show the muted state on the button
+    // - even muted play refused: mark the slide so a tap on it starts the video
+    // - a play() cut short by pause()/a new load is normal while scrolling, not a refusal
+    function startPlayback(vid) {
+      const p = vid.play();
+      if (!p || !p.catch) return;
+      p.catch(err => {
+        if (vid !== currentVid || (err && err.name === 'AbortError')) return;
+        if (!vid.muted) {
+          currentMuted = true;
+          vid.muted = true;
+          paintMute();
+          startPlayback(vid);
+        } else {
+          vid.parentElement?.classList.add('needs-tap');
+        }
+      });
+    }
+
+    // Make the slide at idx the active one: controls, counter, playback
+    function activate(idx) {
+      const vid = videoEls[idx];
+      if (!vid) return;
+      playerColumnOffsets[0] = winStart + idx;
+      updateControls(renderList[idx], vid);
+      vid._userPaused = false;
+      startPlayback(vid);
+      if (counter) counter.textContent = `${winStart + idx + 1} / ${total}`;
+      // a little head start for the next video
+      const next = videoEls[idx + 1];
+      if (next && next.preload === 'none') next.preload = 'metadata';
+    }
+
+    // Safety net for the observer: once scrolling settles, the slide in view must be the one playing
+    let settleTimer = null;
+    function syncToView() {
+      const h = feed.clientHeight;
+      if (!h) return;
+      const idx = Math.max(0, Math.min(videoEls.length - 1, Math.round(feed.scrollTop / h)));
+      const vid = videoEls[idx];
+      if (!vid) return;
+      if (currentVid !== vid) {
+        videoEls.forEach((v, j) => { if (j !== idx && !v.paused) v.pause(); });
+        activate(idx);
+      } else if (vid.paused && !vid._userPaused) {
+        startPlayback(vid);
+      }
+    }
+
     renderList.forEach((item, idx) => {
       const slide = document.createElement('div');
       slide.className = 'player-slide';
@@ -3257,6 +3369,7 @@
       video.poster = item.coverSrc;
       video.className = 'player-video';
       video.addEventListener('playing', () => { video.poster = ''; }, { once: true });
+      video.addEventListener('playing', () => { slide.classList.remove('needs-tap'); });
       video.addEventListener('ended',   () => { video.currentTime = 0; video.play().catch(() => {}); });
       video.addEventListener('contextmenu', e => { e.preventDefault(); video.paused ? video.play().catch(() => {}) : video.pause(); });
 
@@ -3267,7 +3380,8 @@
         const dy = e.changedTouches[0].clientY - _sty;
         // Tap only — overlay handles horizontal swipe, feed handles vertical scroll
         if (Math.abs(dx) < 15 && Math.abs(dy) < 15) {
-          video.paused ? video.play().catch(() => {}) : video.pause();
+          if (video.paused) { video._userPaused = false; video.play().catch(() => {}); }
+          else { video._userPaused = true; video.pause(); }
         }
       }, { passive: true });
 
@@ -3298,10 +3412,7 @@
             const idx = parseInt(entry.target.dataset.idx);
             const vid = videoEls[idx];
             if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
-              playerColumnOffsets[0] = winStart + idx;
-              updateControls(renderList[idx], vid);
-              vid.play().catch(() => {});
-              if (counter) counter.textContent = `${winStart + idx + 1} / ${total}`;
+              activate(idx);
             } else {
               vid.pause();
             }
@@ -3311,9 +3422,12 @@
         feed.querySelectorAll('.player-slide').forEach(s => io.observe(s));
 
         // Kick off the starting video
-        updateControls(renderList[startIdx], videoEls[startIdx]);
-        videoEls[startIdx]?.play().catch(() => {});
-        if (counter) counter.textContent = `${winStart + startIdx + 1} / ${total}`;
+        activate(startIdx);
+
+        feed.addEventListener('scroll', () => {
+          clearTimeout(settleTimer);
+          settleTimer = setTimeout(syncToView, 140);
+        }, { passive: true });
       } else {
         requestAnimationFrame(setSlideHeights);
       }
@@ -3830,7 +3944,7 @@ render();
   function renderAuthorView() {
     if (!authorViewEl || !activeAuthorId) return;
     const author = openAuthors.find(a => a.id === activeAuthorId);
-    const videos = authorVideos(activeAuthorId);
+    const videos = sortVideos(authorVideos(activeAuthorId), 'author');
     releaseGridPreviews(authorViewEl);
     authorViewEl.innerHTML = '';
 
@@ -4513,7 +4627,7 @@ render();
     const msg = text => {
       const d = document.createElement('div'); d.id = 'autotag-msg'; d.textContent = text; grid.appendChild(d);
     };
-    const list = atData && atData[atMode] ? atData[atMode] : [];  // unsure may be missing on an older server
+    const list = sortVideos(atData && atData[atMode] ? atData[atMode] : [], 'autotag');  // unsure may be missing on an older server
     if (atError) msg(atError);
     if (!atData) { if (!atError) msg('Loading…'); }
     else if (!atData.available) msg('No suggestions yet. Run the autotagTT job first.');
@@ -4953,9 +5067,16 @@ render();
       .grid-playall { background: rgba(255,255,255,.08); border: 1px solid #444; color: #ccc; border-radius: 12px; padding: 1px 10px; font-size: 12px; line-height: 18px; cursor: pointer; }
       .grid-playall:hover { background: rgba(255,255,255,.16); color: #fff; }
       .grid-playall.on { background: rgba(255,255,255,.2); border-color: #888; color: #fff; }
+      .grid-sort { height: 24px; max-width: 96px; padding: 0 4px; background: #1e1e1e; border: 1px solid #444; border-radius: 12px; color: #ccc; font-size: 12px; outline: none; cursor: pointer; }
+      .grid-sort:hover { border-color: #777; color: #fff; }
       .grid-size { width: 110px; height: 16px; margin: 0; accent-color: #aaa; cursor: pointer; }
       .preview-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
       .stars-grid-cover.is-playing::after { display: none; }
+      .player-slide.needs-tap::after {
+        content: '▶'; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        width: 64px; height: 64px; border-radius: 50%; background: rgba(0,0,0,.55); color: #fff;
+        font-size: 28px; line-height: 64px; text-align: center; pointer-events: none;
+      }
       .author-view-close { display: none; margin-left: auto; background: none; border: none; color: #ccc; font-size: 18px; cursor: pointer; padding: 0 4px; }
       #author-grid { flex: 1; overflow-y: auto; padding: 14px 18px; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; align-content: start; }
       .author-empty { color: #777; font-size: 14px; grid-column: 1 / -1; }
@@ -4987,7 +5108,10 @@ render();
         #autotag-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; padding: 8px; }
         #autotag-head { padding: 8px 10px; }
         #author-view { position: fixed; inset: 0; bottom: calc(72px + env(safe-area-inset-bottom, 0px)); z-index: 3500; background: #0d0d0d; }
-        .author-view-close { display: block; }
+        .author-view-close { display: block; flex-shrink: 0; }
+        #author-view-header { overflow: hidden; }
+        #author-view-header .stars-main-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        #author-view-header .stars-main-count, #author-view-header .grid-controls { flex-shrink: 0; }
         #author-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; padding: 8px; }
       }
 
@@ -5336,7 +5460,9 @@ render();
         }
         #stars-mobile-title .stars-main-count { font-size: 12px; color: #666; flex-shrink: 0; }
         #stars-mobile-header .grid-controls { pointer-events: auto; flex-shrink: 0; }
-        .grid-size { width: 84px; }
+        .grid-size { width: 56px; }
+        .grid-controls { gap: 5px; }
+        .grid-sort { max-width: 72px; font-size: 11px; padding: 0 2px; }
 
         /* ── Filter buttons: fixed bottom-right stack (like player controls) ── */
         #stars-mobile-filters {
