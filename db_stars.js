@@ -66,6 +66,7 @@ function loadFeedback() {
       out[tag] = {
         accepted: Array.isArray(v.accepted) ? v.accepted.filter(isId) : [],
         rejected: Array.isArray(v.rejected) ? v.rejected.filter(isId) : [],
+        unsure:   Array.isArray(v.unsure)   ? v.unsure.filter(isId)   : [],
       };
     }
   }
@@ -76,8 +77,8 @@ function loadAutotag(tag) {
   if (typeof tag !== 'string' || !TAG_RE.test(tag)) return { error: 'bad tag' };
   const sugg = readJson(AUTOTAG_FILE);
   const tags = sugg ? Object.keys(sugg).filter(k => k[0] !== '_' && Array.isArray(sugg[k])) : [];
-  const fb = loadFeedback()[tag] || { accepted: [], rejected: [] };
-  const decided = new Set([...fb.accepted, ...fb.rejected]);
+  const fb = loadFeedback()[tag] || { accepted: [], rejected: [], unsure: [] };
+  const decided = new Set([...fb.accepted, ...fb.rejected, ...fb.unsure]);
   const list = (sugg && Array.isArray(sugg[tag])) ? sugg[tag] : [];
   const pending = list
     .filter(x => x && isId(x.id) && !decided.has(x.id))
@@ -86,29 +87,32 @@ function loadAutotag(tag) {
   const withScore = ids => ids.map(id => ({ id, score: score.get(id) ?? null }));
   return {
     available: !!sugg, tags, tag, pending,
-    accepted: withScore(fb.accepted), rejected: withScore(fb.rejected),
+    accepted: withScore(fb.accepted), rejected: withScore(fb.rejected), unsure: withScore(fb.unsure),
     generated: sugg && sugg._meta ? sugg._meta.generated || null : null,
   };
 }
 
-// decision: 'accepted' | 'rejected' | 'pending' (undo a rejection). Repeating a decision is a no-op;
+// decision: 'accepted' | 'rejected' | 'unsure' | 'pending' (undo a rejection / not-sure). 'unsure' is not a label: training ignores it. Repeating a decision is a no-op;
 // switching an existing decision needs change=true so nothing is overwritten silently.
 function recordFeedback(tag, id, decision, change) {
   if (typeof tag !== 'string' || !TAG_RE.test(tag)) return { code: 400, error: 'bad tag' };
   if (!isId(id)) return { code: 400, error: 'bad id' };
-  if (!['accepted', 'rejected', 'pending'].includes(decision)) return { code: 400, error: 'bad decision' };
+  if (!['accepted', 'rejected', 'unsure', 'pending'].includes(decision)) return { code: 400, error: 'bad decision' };
   const all = loadFeedback();
-  const fb = all[tag] || { accepted: [], rejected: [] };
+  const fb = all[tag] || { accepted: [], rejected: [], unsure: [] };
+  fb.unsure = fb.unsure || [];
   const known = (readJson(AUTOTAG_FILE) || {})[tag];
   const isSuggested = Array.isArray(known) && known.some(x => x && x.id === id);
-  const cur = fb.accepted.includes(id) ? 'accepted' : fb.rejected.includes(id) ? 'rejected' : 'pending';
+  const cur = fb.accepted.includes(id) ? 'accepted' : fb.rejected.includes(id) ? 'rejected' : fb.unsure.includes(id) ? 'unsure' : 'pending';
   if (!isSuggested && cur === 'pending') return { code: 404, error: 'unknown suggestion' };
   if (cur === decision) return { code: 200, ok: true, unchanged: true, status: cur };
   if (cur !== 'pending' && !change) return { code: 409, error: 'already ' + cur, status: cur };
   if (cur === 'accepted') return { code: 409, error: 'accepted videos are managed through their group', status: cur };
   fb.rejected = fb.rejected.filter(x => x !== id);
+  fb.unsure = fb.unsure.filter(x => x !== id);
   if (decision === 'accepted') fb.accepted.push(id);
   if (decision === 'rejected') fb.rejected.push(id);
+  if (decision === 'unsure') fb.unsure.push(id);
   all[tag] = fb;
   const dir = path.dirname(FEEDBACK_FILE);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });

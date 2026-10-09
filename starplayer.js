@@ -4397,7 +4397,7 @@ render();
     atBusy.add(id);
     card.querySelectorAll('.at-btn').forEach(b => { b.disabled = true; });
     try {
-      await atSendFeedback(id, decision, atMode === 'rejected');
+      await atSendFeedback(id, decision, atMode !== 'pending');
       if (decision === 'accepted') {
         // Only now, after the explicit click and a recorded decision, touch the group
         const name = atGroupName(atTag);
@@ -4429,6 +4429,13 @@ render();
     img.onerror = () => { img.style.display = 'none'; };
     cover.appendChild(img);
     cover.appendChild(buildThumbTools(id, coverSrc, info.authorName, info.desc));
+    const un = info.authorName || '';
+    if (un) {
+      const u = document.createElement('span');
+      u.className = 'at-user';
+      setAuthorLink(u, un);
+      cover.appendChild(u);
+    }
     if (item.score != null) {
       const sc = document.createElement('span');
       sc.className = 'at-score';
@@ -4446,10 +4453,14 @@ render();
       b.addEventListener('click', e => { e.stopPropagation(); fn(); });
       return b;
     };
+    const accept = () => mk('accept', '✓', 'Accept: add to "' + atGroupName(atTag) + '"', () => atDecide(id, 'accepted', card));
+    const reject = () => mk('reject', '✕', 'Reject: not ' + atTag, () => atDecide(id, 'rejected', card));
     if (atMode === 'pending') {
-      row.append(
-        mk('accept', '✓', 'Accept: add to "' + atGroupName(atTag) + '"', () => atDecide(id, 'accepted', card)),
-        mk('reject', '✕', 'Reject: not ' + atTag, () => atDecide(id, 'rejected', card)));
+      row.append(accept(),
+        mk('unsure', '?', 'Not sure: set aside, no label for training', () => atDecide(id, 'unsure', card)),
+        reject());
+    } else if (atMode === 'unsure') {
+      row.append(accept(), reject(), mk('', '↺', 'Move back to pending', () => atDecide(id, 'pending', card)));
     } else if (atMode === 'rejected') {
       row.append(mk('', 'Restore', 'Move back to pending', () => atDecide(id, 'pending', card)));
     } else {
@@ -4485,11 +4496,12 @@ render();
 
     const modes = document.createElement('div');
     modes.className = 'at-modes';
-    const counts = atData ? { pending: atData.pending.length, accepted: atData.accepted.length, rejected: atData.rejected.length } : {};
-    ['pending', 'accepted', 'rejected'].forEach(m => {
+    const counts = atData ? { pending: atData.pending.length, accepted: atData.accepted.length, rejected: atData.rejected.length, unsure: (atData.unsure || []).length } : {};
+    const labels = { pending: 'Pending', accepted: 'Accepted', rejected: 'Rejected', unsure: 'Not sure' };
+    ['pending', 'unsure', 'accepted', 'rejected'].forEach(m => {
       const b = document.createElement('button');
       b.className = 'at-mode' + (atMode === m ? ' on' : '');
-      b.textContent = m[0].toUpperCase() + m.slice(1) + (counts[m] != null ? ' ' + counts[m] : '');
+      b.textContent = labels[m] + (counts[m] != null ? ' ' + counts[m] : '');
       b.addEventListener('click', () => { atMode = m; renderAutotagView(); });
       modes.appendChild(b);
     });
@@ -4501,7 +4513,7 @@ render();
     const msg = text => {
       const d = document.createElement('div'); d.id = 'autotag-msg'; d.textContent = text; grid.appendChild(d);
     };
-    const list = atData && atData[atMode] ? atData[atMode] : [];
+    const list = atData && atData[atMode] ? atData[atMode] : [];  // unsure may be missing on an older server
     if (atError) msg(atError);
     if (!atData) { if (!atError) msg('Loading…'); }
     else if (!atData.available) msg('No suggestions yet. Run the autotagTT job first.');
@@ -4884,6 +4896,9 @@ render();
       #autotag-grid { flex: 1; overflow-y: auto; padding: 14px 18px; display: grid; grid-template-columns: repeat(auto-fill,minmax(150px,1fr)); gap: 14px; align-content: start; }
       #autotag-msg { grid-column: 1 / -1; color: #888; text-align: center; padding: 40px 10px; font-size: 13px; line-height: 1.6; }
       .at-score { position: absolute; bottom: 4px; left: 4px; background: rgba(0,0,0,.7); color: #ddd; border-radius: 8px; padding: 1px 7px; font-size: 11px; pointer-events: none; z-index: 2; }
+      .at-user { position: absolute; top: 6px; right: 6px; z-index: 5; max-width: 85%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: rgba(0,0,0,.7); color: #ddd; border-radius: 8px; padding: 1px 7px; font-size: 11px; }
+      #autotag-view .thumb-tools { top: 30px; }
+      .at-btn.unsure:hover { color: #ffc107; border-color: #ffc107; }
       .at-actions { display: flex; gap: 6px; }
       .at-btn { flex: 1; border: 1px solid #444; background: #1e1e1e; color: #ccc; border-radius: 6px; padding: 7px 0; font-size: 16px; line-height: 1; cursor: pointer; min-height: 34px; }
       .at-btn.accept:hover { color: #4caf50; border-color: #4caf50; }
