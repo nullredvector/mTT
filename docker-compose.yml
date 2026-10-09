@@ -8,6 +8,8 @@ services:
       - /mnt/zion/enc/archive/Downloads/incomplete/content2/shorts:/archive
     environment:
       - ARCHIVE_DIR=/archive
+      # Where the live log tab reads ttpull's /logs (same compose project => reachable by service name)
+      - TTPULL_URL=${TTPULL_URL:-http://ttpull:3847}
     labels:
       - com.centurylinklabs.watchtower.enable=true
 
@@ -20,6 +22,7 @@ services:
       - /mnt/zion/enc/archive/Downloads/incomplete/content2/shorts/testing:/archive
     environment:
       - ARCHIVE_DIR=/archive
+      - TTPULL_URL=${TTPULL_URL:-http://ttpull:3847}
     labels:
       - com.centurylinklabs.watchtower.enable=true
 
