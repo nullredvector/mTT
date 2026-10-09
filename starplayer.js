@@ -3891,7 +3891,50 @@ render();
     return Boolean(activeAuthorId && authorViewEl && authorViewEl.style.display !== 'none');
   }
 
-  function showAuthorTab(id, name) {
+  // ── Where did focus come from? ────────────────────────────────────────────
+  // Each username tab remembers the view that was showing the last time it was focused, so closing
+  // it returns there (browser-style) instead of always landing on the same tab.
+  const authorReturn = new Map();   // author id -> { kind, id? }
+
+  function currentViewDescriptor() {
+    if (activeAuthorId) return { kind: 'author', id: activeAuthorId };
+    if (autotagTabActive) return { kind: 'autotag' };
+    if (logTabActive) return { kind: 'log' };
+    if (starsTabActive) return { kind: 'stars' };
+    return { kind: 'react' };   // the app's own pages (Likes, Favorites, Following, Explain)
+  }
+
+  // Where to go when username tab `id` closes: its remembered view, skipping username tabs that are
+  // gone themselves (follow where those came from); Stars if nothing usable is left.
+  function resolveReturn(id) {
+    let d = authorReturn.get(id);
+    for (let hops = 0; d && d.kind === 'author' && hops < 10; hops++) {
+      if (d.id !== id && openAuthors.some(a => a.id === d.id)) return d;
+      d = authorReturn.get(d.id);
+    }
+    return d && d.kind !== 'author' ? d : { kind: 'stars' };
+  }
+
+  function restoreView(d) {
+    if (isMobilePlayer()) return;
+    switch (d && d.kind) {
+      case 'author': {
+        const a = openAuthors.find(x => x.id === d.id);
+        if (a) { showAuthorTab(a.id, a.name, true); return; }
+        break;
+      }
+      case 'autotag': showAutotagTab(); return;
+      case 'log':     showLogTab();     return;
+      case 'react':   showMainContent(); return;   // the app keeps its own tab selected underneath
+    }
+    showStarsTab();
+  }
+
+  function showAuthorTab(id, name, keepReturn) {
+    if (!keepReturn) {
+      const from = currentViewDescriptor();
+      if (!(from.kind === 'author' && from.id === id)) authorReturn.set(id, from);
+    }
     if (autotagTabActive) hideAutotagView();
     if (logTabActive) hideLogView();
     if (!openAuthors.some(a => a.id === id)) openAuthors.push({ id, name });
@@ -3943,9 +3986,10 @@ render();
     const i = openAuthors.findIndex(a => a.id === id);
     if (i >= 0) openAuthors.splice(i, 1);
     if (activeAuthorId === id) {
+      const back = resolveReturn(id);
       hideAuthorView();
-      // Closing the tab you were on returns to the Stars tab (on a phone the view just closes)
-      if (!isMobilePlayer()) showStarsTab();
+      // Closing the tab you were on returns to the one you came from (on a phone the view just closes)
+      restoreView(back);
     }
     syncAuthorTabs();
     autosaveSession();
@@ -4127,8 +4171,9 @@ render();
     openAuthors.length = 0;
     currentSessionId = null;
     if (activeAuthorId) {
+      const back = resolveReturn(activeAuthorId);
       hideAuthorView();
-      if (!isMobilePlayer()) showStarsTab();
+      restoreView(back);
     }
     syncAuthorTabs();
     closeSessionsMenu();
