@@ -556,6 +556,34 @@
     document.querySelectorAll('div.cover').forEach(injectOrUpdateButton);
     document.querySelectorAll('div.cover').forEach(interceptCoverClick);
     applyMobileCards();
+    stampLastRun();
+  }
+
+  // The viewer's "Last run: today." only gives a relative day. Put the real time after it.
+  // Done with a data attribute + CSS ::after so the viewer's own (React-managed) DOM isn't touched.
+  function stampLastRun() {
+    const root = document.getElementById('archive');
+    if (!root) return;
+    const para = [...root.querySelectorAll('p')].find(el => /^\s*Last run:/.test(el.textContent));
+    if (!para) return;
+
+    let data = _dbCache;
+    if (!data && Date.now() - _fiberFailAt > 5000) {
+      data = findArchiveData();
+      if (!data) _fiberFailAt = Date.now();
+    }
+    if (!data) { ensureArchiveDb(); return; }
+
+    // Which list is on screen? The covers' folder tells us.
+    const img = root.querySelector('img[src*="data/Likes/"], img[src*="data/Favorites/"]');
+    const kind = img && tabForCover(img.getAttribute('src'));
+    const list = kind === 'bookmarked' ? data.bookmarked : kind === 'likes' ? data.likes : null;
+    const run = list && list.lastRun;
+    const ms = run && Math.max(Number(run.start) || 0, Number(run.finish) || 0);
+    if (!ms) return;
+
+    const when = new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+    if (para.getAttribute('data-sp-lastrun') !== when) para.setAttribute('data-sp-lastrun', when);
   }
 
   // Intercept thumbnail clicks to open our overlay instead of React's player.
@@ -4460,6 +4488,9 @@ render();
   function injectStyles() {
     const s = document.createElement('style');
     s.textContent = `
+      /* ── Exact time after the viewer's "Last run: today." ── */
+      p[data-sp-lastrun]::after { content: ' ' attr(data-sp-lastrun); opacity: 0.75; }
+
       /* ── Star buttons on main-list cards ── */
       div.cover { position: relative; }
       .star-btn {
