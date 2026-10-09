@@ -861,6 +861,7 @@
       playerReturnTab = fromAuthor ? '__author__'
                      : activeMobileTab === 'stars' ? 'stars'
                      : activeMobileTab === 'recents' ? 'recents'
+                     : activeMobileTab === 'review' ? 'review'
                      : null;
       playerOpen = true;
       playerVideoList = contextList;
@@ -1200,7 +1201,7 @@
   let gridPlayAll = false;        // play every thumbnail near the viewport
   let previewsSuspended = false;  // paused while a full-screen player is open
   const canHover = typeof matchMedia === 'function' && matchMedia('(hover: hover)').matches;
-  const THUMB_DEFAULTS = { stars: 110, 'stars-m': 85, author: 220, 'author-m': 160 };
+  const THUMB_DEFAULTS = { stars: 110, 'stars-m': 85, author: 220, 'author-m': 160, autotag: 150, 'autotag-m': 150 };
 
   function thumbKey(page) { return isMobilePlayer() ? page + '-m' : page; }
 
@@ -1396,6 +1397,7 @@
   }
 
   function showStarsTab() {
+    if (autotagTabActive) hideAutotagView();
     if (logTabActive) hideLogView();
     if (activeAuthorId) hideAuthorView();
     starsTabActive = true;
@@ -1406,7 +1408,7 @@
 
     if (isMobilePlayer()) { activeMobileTab = 'stars'; updateMobileNavActive(); }
     else {
-      document.querySelectorAll('nav .author-tab.active, nav .log-tab.active').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('nav .author-tab.active, nav .log-tab.active, nav .autotag-tab.active').forEach(el => el.classList.remove('active'));
       document.querySelector('nav .stars-tab')?.classList.add('active');
     }
 
@@ -1421,6 +1423,7 @@
   }
 
   function showMainContent() {
+    if (autotagTabActive) hideAutotagView();
     if (logTabActive) hideLogView();
     if (activeAuthorId) hideAuthorView();
     starsTabActive = false;
@@ -2250,8 +2253,8 @@
   let recentsGridBuilt     = false; // true once grid has been populated
 
   // ── Mobile tab state ───────────────────────────────────────────────────────
-  const MOBILE_TABS = ['home', 'stars', 'recents', 'favs'];
-  let activeMobileTab = 'home';
+  const MOBILE_TABS = ['home', 'stars', 'recents', 'favs', 'review'];
+  let activeMobileTab = 'stars';   // the app opens on Stars (see showDefaultStarsView)
 
   function updateMobileNavActive() {
     document.querySelectorAll('#sp-mobile-nav .sp-nav-btn').forEach(btn => {
@@ -2261,6 +2264,7 @@
 
   function setMobileTab(tab, skipAnim) {
     if (activeAuthorId) hideAuthorView(false);
+    if (autotagTabActive && tab !== 'review') hideAutotagView();
     if (tab !== 'stars') releaseGridPreviews(starsViewEl);
     const oldIdx = MOBILE_TABS.indexOf(activeMobileTab);
     const newIdx = MOBILE_TABS.indexOf(tab);
@@ -2281,6 +2285,10 @@
     } else if (tab === 'recents') {
       if (playerOpen) closePlayer();
       showRecentsView();
+    } else if (tab === 'review') {
+      if (playerOpen) closePlayer();
+      hideRecentsView();
+      showAutotagTab();
     } else {
       // favs
       if (playerOpen) closePlayer();
@@ -2302,6 +2310,7 @@
       { id: 'stars',   label: 'Stars',   svg: '<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>' },
       { id: 'recents', label: 'Recents', svg: '<path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zm4.24 16L11 13.5V7h1.5v5.87l4.75 2.82-1.01 1.74z"/>' },
       { id: 'favs',    label: 'Favs',    svg: '<path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>' },
+      { id: 'review',  label: 'Review',  svg: '<path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z"/>' },
     ];
     tabs.forEach(({ id, label, svg }) => {
       const btn = document.createElement('button');
@@ -2314,12 +2323,13 @@
     document.body.appendChild(nav);
   }
 
-  const TAB_LABELS = { home: 'Home', stars: 'Stars', recents: 'Recents', favs: 'Favs' };
+  const TAB_LABELS = { home: 'Home', stars: 'Stars', recents: 'Recents', favs: 'Favs', review: 'Review' };
 
   function getSwipeViewEl() {
     if (activeMobileTab === 'home')    return playerViewEl;
     if (activeMobileTab === 'stars')   return document.getElementById('stars-view');
     if (activeMobileTab === 'recents') return recentsGridEl;
+    if (activeMobileTab === 'review')  return autotagViewEl;
     return document.querySelector('main');
   }
 
@@ -3758,6 +3768,7 @@ render();
   }
 
   function showAuthorTab(id, name) {
+    if (autotagTabActive) hideAutotagView();
     if (logTabActive) hideLogView();
     if (!openAuthors.some(a => a.id === id)) openAuthors.push({ id, name });
     activeAuthorId = id;
@@ -3809,7 +3820,8 @@ render();
     if (i >= 0) openAuthors.splice(i, 1);
     if (activeAuthorId === id) {
       hideAuthorView();
-      if (!isMobilePlayer()) showMainContent();
+      // Closing the tab you were on returns to the Stars tab (on a phone the view just closes)
+      if (!isMobilePlayer()) showStarsTab();
     }
     syncAuthorTabs();
     autosaveSession();
@@ -3992,7 +4004,7 @@ render();
     currentSessionId = null;
     if (activeAuthorId) {
       hideAuthorView();
-      if (!isMobilePlayer()) showMainContent();
+      if (!isMobilePlayer()) showStarsTab();
     }
     syncAuthorTabs();
     closeSessionsMenu();
@@ -4313,6 +4325,7 @@ render();
 
   function showLogTab() {
     if (isMobilePlayer() || logTabActive) return;
+    if (autotagTabActive) hideAutotagView();
     if (activeAuthorId) hideAuthorView();
     if (starsTabActive) {
       starsTabActive = false;
@@ -4340,6 +4353,207 @@ render();
     if (logViewEl) logViewEl.style.display = 'none';
     document.body.classList.remove('sp-log-open');
     document.querySelector('nav .log-tab')?.classList.remove('active');
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // AUTOTAGTT — review suggestions made by the local autotagTT batch job
+  // Accept: records the decision, then adds the video to the tag's group (explicit click only).
+  // Reject: records the decision only; group membership is never changed.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  let autotagTabActive = false;
+  let autotagViewEl    = null;
+  let atTag            = 'braces';
+  let atMode           = 'pending';   // 'pending' | 'accepted' | 'rejected'
+  let atData           = null;        // last /api/autotag response
+  let atError          = '';
+  let atBusy           = new Set();
+
+  function atGroupName(tag) {
+    const g = groups.find(x => String(x.name).trim().toLowerCase() === tag);
+    return g ? g.name : tag;
+  }
+
+  async function atLoad() {
+    atError = '';
+    try {
+      const r = await fetch('/api/autotag?tag=' + encodeURIComponent(atTag), { cache: 'no-store' });
+      if (!r.ok) throw new Error(r.status);
+      atData = await r.json();
+    } catch (_) { atData = null; atError = 'Could not load suggestions.'; }
+    renderAutotagView();
+  }
+
+  async function atSendFeedback(id, decision, change) {
+    const r = await fetch('/api/autotag/feedback', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tag: atTag, id, decision, change: !!change }),
+    });
+    if (!r.ok) throw new Error(r.status);
+  }
+
+  async function atDecide(id, decision, card) {
+    if (atBusy.has(id)) return;
+    atBusy.add(id);
+    card.querySelectorAll('.at-btn').forEach(b => { b.disabled = true; });
+    try {
+      await atSendFeedback(id, decision, atMode === 'rejected');
+      if (decision === 'accepted') {
+        // Only now, after the explicit click and a recorded decision, touch the group
+        const name = atGroupName(atTag);
+        if (!inQuickGroup(id, name)) toggleQuickGroup(id, name);
+      }
+      await atLoad();
+    } catch (_) {
+      card.querySelectorAll('.at-btn').forEach(b => { b.disabled = false; });
+      atError = 'Could not save that decision; nothing was changed.';
+      renderAutotagView();
+    } finally { atBusy.delete(id); }
+  }
+
+  function buildAutotagCard(item, idx, list) {
+    const id = item.id;
+    const coverSrc = coverSrcFor(id);
+    const info = getVideoInfo(id);
+    const card = document.createElement('div');
+    card.className = 'stars-grid-card';
+    card.dataset.id = id;
+
+    const cover = document.createElement('div');
+    cover.className = 'stars-grid-cover';
+    attachPreview(cover, getVideoPath(coverSrc));
+    cover.addEventListener('click', () => openVideoOverlay(list.findIndex(v => v.id === id), list));
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    img.src = coverSrc;
+    img.onerror = () => { img.style.display = 'none'; };
+    cover.appendChild(img);
+    cover.appendChild(buildThumbTools(id, coverSrc, info.authorName, info.desc));
+    if (item.score != null) {
+      const sc = document.createElement('span');
+      sc.className = 'at-score';
+      sc.title = 'Model score (higher = more like the tagged examples; not a probability)';
+      sc.textContent = item.score.toFixed(2);
+      cover.appendChild(sc);
+    }
+    card.appendChild(cover);
+
+    const row = document.createElement('div');
+    row.className = 'at-actions';
+    const mk = (cls, text, title, fn) => {
+      const b = document.createElement('button');
+      b.className = 'at-btn ' + cls; b.textContent = text; b.title = title;
+      b.addEventListener('click', e => { e.stopPropagation(); fn(); });
+      return b;
+    };
+    if (atMode === 'pending') {
+      row.append(
+        mk('accept', '✓', 'Accept: add to "' + atGroupName(atTag) + '"', () => atDecide(id, 'accepted', card)),
+        mk('reject', '✕', 'Reject: not ' + atTag, () => atDecide(id, 'rejected', card)));
+    } else if (atMode === 'rejected') {
+      row.append(mk('', 'Restore', 'Move back to pending', () => atDecide(id, 'pending', card)));
+    } else {
+      const n = document.createElement('div');
+      n.className = 'at-note';
+      n.textContent = inQuickGroup(id, atGroupName(atTag)) ? 'in "' + atGroupName(atTag) + '"' : 'accepted (no longer in group)';
+      card.appendChild(n);
+    }
+    if (row.childNodes.length) card.appendChild(row);
+    return card;
+  }
+
+  function renderAutotagView() {
+    if (!autotagViewEl) return;
+    releaseGridPreviews(autotagViewEl);
+    autotagViewEl.innerHTML = '';
+
+    const head = document.createElement('div');
+    head.id = 'autotag-head';
+    const title = document.createElement('span');
+    title.className = 'stars-main-title';
+    title.textContent = 'autotagTT';
+    const sel = document.createElement('select');
+    sel.title = 'Tag';
+    const tags = (atData && atData.tags && atData.tags.length) ? atData.tags : [atTag];
+    if (!tags.includes(atTag)) tags.push(atTag);
+    tags.forEach(t => {
+      const o = document.createElement('option');
+      o.value = t; o.textContent = t; o.selected = t === atTag;
+      sel.appendChild(o);
+    });
+    sel.addEventListener('change', () => { atTag = sel.value; atMode = 'pending'; atLoad(); });
+
+    const modes = document.createElement('div');
+    modes.className = 'at-modes';
+    const counts = atData ? { pending: atData.pending.length, accepted: atData.accepted.length, rejected: atData.rejected.length } : {};
+    ['pending', 'accepted', 'rejected'].forEach(m => {
+      const b = document.createElement('button');
+      b.className = 'at-mode' + (atMode === m ? ' on' : '');
+      b.textContent = m[0].toUpperCase() + m.slice(1) + (counts[m] != null ? ' ' + counts[m] : '');
+      b.addEventListener('click', () => { atMode = m; renderAutotagView(); });
+      modes.appendChild(b);
+    });
+    head.append(title, sel, modes);
+
+    const grid = document.createElement('div');
+    grid.id = 'autotag-grid';
+    grid.className = 'preview-grid';
+    const msg = text => {
+      const d = document.createElement('div'); d.id = 'autotag-msg'; d.textContent = text; grid.appendChild(d);
+    };
+    const list = atData && atData[atMode] ? atData[atMode] : [];
+    if (atError) msg(atError);
+    if (!atData) { if (!atError) msg('Loading…'); }
+    else if (!atData.available) msg('No suggestions yet. Run the autotagTT job first.');
+    else if (!list.length) msg(atMode === 'pending' ? 'No pending suggestions for "' + atTag + '".' : 'Nothing here yet.');
+    else {
+      const ctx = list.map(it => {
+        const cs = coverSrcFor(it.id), inf = getVideoInfo(it.id);
+        return { id: it.id, coverSrc: cs, videoPath: getVideoPath(cs), authorName: inf.authorName || '', desc: inf.desc || '' };
+      });
+      fillGrid(grid, list, (it, i) => buildAutotagCard(it, i, ctx));
+    }
+    head.appendChild(buildGridControls('autotag', grid, autotagViewEl));
+    autotagViewEl.append(head, grid);
+    observeGridPreviews(grid);
+  }
+
+  function showAutotagTab() {
+    if (autotagTabActive) return;
+    if (activeAuthorId) hideAuthorView();
+    if (logTabActive) hideLogView();
+    if (starsTabActive) {
+      starsTabActive = false;
+      if (starsViewEl) { releaseGridPreviews(starsViewEl); starsViewEl.style.display = 'none'; }
+      document.querySelector('nav .stars-tab')?.classList.remove('active');
+    }
+    closeVideoOverlay();
+    closePanel();
+    autotagTabActive = true;
+    document.querySelector('main')?.style.setProperty('display', 'none');
+    toggleBtn.style.display = 'none';
+    document.body.classList.add('sp-autotag-open');
+    if (isMobilePlayer()) { activeMobileTab = 'review'; updateMobileNavActive(); }
+    else document.querySelector('nav .autotag-tab')?.classList.add('active');
+    if (!autotagViewEl) {
+      autotagViewEl = document.createElement('div');
+      autotagViewEl.id = 'autotag-view';
+      const main = document.querySelector('main');
+      if (main) main.parentNode.insertBefore(autotagViewEl, main); else document.body.appendChild(autotagViewEl);
+    }
+    autotagViewEl.style.display = 'flex';
+    ensureArchiveDb();
+    if (_dbCache) { renderAutotagView(); atLoad(); }
+    else { renderAutotagView(); archiveDbPromise().catch(() => {}).then(() => { if (autotagTabActive) atLoad(); }); }
+  }
+
+  function hideAutotagView() {
+    if (!autotagTabActive) return;
+    autotagTabActive = false;
+    releaseGridPreviews(autotagViewEl);
+    if (autotagViewEl) autotagViewEl.style.display = 'none';
+    document.body.classList.remove('sp-autotag-open');
+    document.querySelector('nav .autotag-tab')?.classList.remove('active');
   }
 
   function makeNavTab(className, svgPath, label, onClick) {
@@ -4421,6 +4635,17 @@ render();
       nav.appendChild(tab);
     }
 
+    // autotagTT review tab — last in the nav, after the log tab
+    if (!nav.querySelector('.autotag-tab')) {
+      const tab = makeNavTab('autotag-tab',
+        '<path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z"/><path d="M3 3h18v2H3z"/>',
+        'autotagTT suggestions',
+        () => showAutotagTab()
+      );
+      if (autotagTabActive) tab.classList.add('active');
+      nav.appendChild(tab);
+    }
+
     syncAuthorTabs();
   }
 
@@ -4430,8 +4655,8 @@ render();
     nav.addEventListener('click', e => {
       const tab = e.target.closest('.pressable');
       if (!tab || playerBuilding) return; // ignore clicks while collecting video IDs
-      const isOwnTab = tab.classList.contains('stars-tab') || tab.classList.contains('author-tab') || tab.classList.contains('log-tab');
-      if (!isOwnTab && (starsTabActive || activeAuthorId || logTabActive)) showMainContent();
+      const isOwnTab = tab.classList.contains('stars-tab') || tab.classList.contains('author-tab') || tab.classList.contains('log-tab') || tab.classList.contains('autotag-tab');
+      if (!isOwnTab && (starsTabActive || activeAuthorId || logTabActive || autotagTabActive)) showMainContent();
       if (!tab.classList.contains('player-tab') && playerOpen && isMobilePlayer()) closePlayer();
     });
   }
@@ -4460,8 +4685,7 @@ render();
       createMobileNav();
       setupMobileSwipe();
       // Show loading overlay immediately, then open player
-      showMobilePlayerLoading();
-      setTimeout(() => { if (!playerOpen) setMobileTab('home'); }, 300);
+      showDefaultStarsView();
     } else {
       const nav = document.querySelector('nav');
       if (nav) new MutationObserver(injectNavTabs).observe(nav, { childList: true });
@@ -4476,12 +4700,12 @@ render();
   let defaultViewShown = false;
   function showDefaultStarsView(tries = 0) {
     if (defaultViewShown) return;
-    if (!document.querySelector('main') || !document.querySelector('nav .stars-tab')) {
+    if (!document.querySelector('main') || (!isMobilePlayer() && !document.querySelector('nav .stars-tab'))) {
       if (tries < 50) setTimeout(() => showDefaultStarsView(tries + 1), 100);
       return;
     }
     defaultViewShown = true;
-    if (!starsTabActive && !logTabActive && !activeAuthorId) showStarsTab();
+    if (!starsTabActive && !logTabActive && !autotagTabActive && !activeAuthorId) showStarsTab();
   }
 
   // ── Expose live API for pop-out windows ──────────────────────────────────
@@ -4572,7 +4796,7 @@ render();
       .star-panel-desc   { font-size:11px; color:#777; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
       /* ── Stars & Player nav tabs ── */
-      nav .stars-tab, nav .player-tab, nav .session-tab, nav .log-tab {
+      nav .stars-tab, nav .player-tab, nav .session-tab, nav .log-tab, nav .autotag-tab {
         display: flex; align-items: center;
         cursor: pointer; border-bottom: 3px solid transparent; color: inherit;
         white-space: nowrap;
@@ -4581,23 +4805,23 @@ render();
       /* ── Icon-only top nav (labels hidden; title tooltips added in JS) ── */
       nav { margin-left: 20px !important; }
       nav .likes, nav .bookmarked, nav .following, nav .readme,
-      nav .stars-tab, nav .player-tab, nav .session-tab, nav .log-tab {
+      nav .stars-tab, nav .player-tab, nav .session-tab, nav .log-tab, nav .autotag-tab {
         font-size: 0 !important; gap: 0 !important;
         margin: 3.3px 2px 0 !important; padding: 0 14px !important;
         justify-content: center; border-radius: 6px 6px 0 0;
         transition: color .15s, background .15s;
       }
       nav .likes svg, nav .bookmarked svg, nav .following svg, nav .readme svg,
-      nav .stars-tab svg, nav .player-tab svg, nav .session-tab svg, nav .log-tab svg {
+      nav .stars-tab svg, nav .player-tab svg, nav .session-tab svg, nav .log-tab svg, nav .autotag-tab svg {
         width: 20px !important; height: 20px !important; margin: 0 !important;
       }
       nav .likes:not(.active):hover, nav .bookmarked:not(.active):hover,
       nav .following:not(.active):hover, nav .readme:not(.active):hover,
-      nav .stars-tab:not(.active):hover, nav .player-tab:not(.active):hover, nav .session-tab:not(.menu-open):hover, nav .log-tab:not(.active):hover {
+      nav .stars-tab:not(.active):hover, nav .player-tab:not(.active):hover, nav .session-tab:not(.menu-open):hover, nav .log-tab:not(.active):hover, nav .autotag-tab:not(.active):hover {
         color: var(--active, #d7d7d7); background: rgba(255,255,255,.05);
       }
       nav .likes.active, nav .bookmarked.active, nav .following.active, nav .readme.active,
-      nav .stars-tab.active, nav .player-tab.active, nav .session-tab.menu-open, nav .log-tab.active {
+      nav .stars-tab.active, nav .player-tab.active, nav .session-tab.menu-open, nav .log-tab.active, nav .autotag-tab.active {
         color: var(--active, #d7d7d7); background: rgba(255,255,255,.09);
         border-bottom: 3px solid var(--active, #d7d7d7); cursor: default;
       }
@@ -4620,12 +4844,14 @@ render();
       }
       nav .log-tab { margin-left: auto !important; }
       nav .stars-tab { order: -1; }
+      nav .autotag-tab { order: 100; }
       /* the app keeps its own tab marked active underneath; hide that highlight while Stars is showing */
       nav:has(.stars-tab.active) .pressable.active:not(.stars-tab) {
         color: var(--inactive, rgb(160,160,160)) !important;
         background: none !important; border-bottom-color: transparent !important;
       }
       body.sp-log-open nav .pressable.active:not(.log-tab),
+      body.sp-autotag-open nav .pressable.active:not(.autotag-tab),
       body.sp-author-open nav .pressable.active:not(.author-tab) {
         color: var(--inactive, rgb(160,160,160)) !important;
         background: none !important; border-bottom-color: transparent !important;
@@ -4649,6 +4875,21 @@ render();
         header:has(> nav) nav .session-tab { right: calc(var(--left-padding, 20px) + 112px); }
       }
 
+      #autotag-view { display: none; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+      #autotag-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 12px 18px 10px; flex-shrink: 0; border-bottom: 1px solid #333; }
+      #autotag-head select { background: #1e1e1e; border: 1px solid #444; border-radius: 12px; color: #ddd; font-size: 12px; padding: 2px 8px; height: 24px; }
+      .at-modes { display: flex; gap: 6px; }
+      .at-mode { background: rgba(255,255,255,.06); border: 1px solid #444; color: #999; border-radius: 12px; padding: 2px 10px; font-size: 12px; line-height: 18px; cursor: pointer; }
+      .at-mode.on { color: #fff; background: rgba(255,255,255,.14); }
+      #autotag-grid { flex: 1; overflow-y: auto; padding: 14px 18px; display: grid; grid-template-columns: repeat(auto-fill,minmax(150px,1fr)); gap: 14px; align-content: start; }
+      #autotag-msg { grid-column: 1 / -1; color: #888; text-align: center; padding: 40px 10px; font-size: 13px; line-height: 1.6; }
+      .at-score { position: absolute; bottom: 4px; left: 4px; background: rgba(0,0,0,.7); color: #ddd; border-radius: 8px; padding: 1px 7px; font-size: 11px; pointer-events: none; z-index: 2; }
+      .at-actions { display: flex; gap: 6px; }
+      .at-btn { flex: 1; border: 1px solid #444; background: #1e1e1e; color: #ccc; border-radius: 6px; padding: 7px 0; font-size: 16px; line-height: 1; cursor: pointer; min-height: 34px; }
+      .at-btn.accept:hover { color: #4caf50; border-color: #4caf50; }
+      .at-btn.reject:hover { color: #f44336; border-color: #f44336; }
+      .at-btn:disabled { opacity: .4; cursor: default; }
+      .at-note { font-size: 11px; color: #777; text-align: center; }
       #log-view { display: none; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
       #log-head { display: flex; align-items: center; gap: 12px; padding: 12px 18px 10px; flex-shrink: 0; border-bottom: 1px solid #333; }
       .log-status { font-size: 12px; color: #888; display: flex; align-items: center; gap: 6px; min-width: 0; }
@@ -4727,6 +4968,9 @@ render();
       .thumb-tool.braces-on { color: #4fc3f7; }
       @media (hover: none) { .thumb-tool { opacity: .9; } }
       @media (max-width: 768px) {
+        #autotag-view { position: fixed; inset: 0; bottom: calc(77px + env(safe-area-inset-bottom, 0px)); z-index: 500; background: #0d0d0d; }
+        #autotag-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; padding: 8px; }
+        #autotag-head { padding: 8px 10px; }
         #author-view { position: fixed; inset: 0; bottom: calc(72px + env(safe-area-inset-bottom, 0px)); z-index: 3500; background: #0d0d0d; }
         .author-view-close { display: block; }
         #author-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; padding: 8px; }
