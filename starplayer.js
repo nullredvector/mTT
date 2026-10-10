@@ -4974,6 +4974,9 @@ render();
   let atData           = null;        // last /api/autotag response
   let atError          = '';
   let atBusy           = new Set();
+  let atEnabled        = [];          // tags ticked in the picker (may not have suggestions yet)
+  let atRun            = null;        // last /api/autotag/run status
+  let atRunTimer       = null;
 
   function atGroupName(tag) {
     const g = groups.find(x => String(x.name).trim().toLowerCase() === tag);
@@ -4987,6 +4990,7 @@ render();
       if (!r.ok) throw new Error(r.status);
       atData = await r.json();
     } catch (_) { atData = null; atError = 'Could not load suggestions.'; }
+    try { atEnabled = (await (await fetch('/api/autotag/tags', { cache: 'no-store' })).json()).enabled || []; } catch (_) {}
     renderAutotagView();
   }
 
@@ -5082,6 +5086,7 @@ render();
   function renderAutotagView() {
     if (!autotagViewEl) return;
     releaseGridPreviews(autotagViewEl);
+    const openPanels = ['at-picker', 'at-run-panel'].map(id => document.getElementById(id)).filter(Boolean);   // survive a re-render
     autotagViewEl.innerHTML = '';
 
     const head = document.createElement('div');
@@ -5091,11 +5096,17 @@ render();
     title.textContent = 'autotagTT';
     const sel = document.createElement('select');
     sel.title = 'Tag';
-    const tags = (atData && atData.tags && atData.tags.length) ? atData.tags : [atTag];
+    const tags = (atData && atData.tags && atData.tags.length) ? [...atData.tags] : [atTag];
     if (!tags.includes(atTag)) tags.push(atTag);
     tags.forEach(t => {
       const o = document.createElement('option');
-      o.value = t; o.textContent = t; o.selected = t === atTag;
+      o.value = t; o.textContent = groupDisplayName(t); o.selected = t === atTag;
+      sel.appendChild(o);
+    });
+    // Ticked in "Tags…" but not trained yet: listed, but nothing to review until the next run
+    atEnabled.filter(t => !tags.includes(t)).forEach(t => {
+      const o = document.createElement('option');
+      o.value = t; o.disabled = true; o.textContent = groupDisplayName(t) + ' (waiting for next run)';
       sel.appendChild(o);
     });
     sel.addEventListener('change', () => { atTag = sel.value; atMode = 'pending'; atLoad(); });
@@ -5114,7 +5125,13 @@ render();
     const pick = document.createElement('button');
     pick.className = 'at-mode'; pick.textContent = 'Tags…'; pick.title = 'Choose which of your groups the AI tagger learns';
     pick.addEventListener('click', openTagPicker);
-    head.append(title, sel, modes, pick);
+    const runBtn = document.createElement('button');
+    runBtn.className = 'at-mode'; runBtn.textContent = 'Run…'; runBtn.title = 'Train the AI tagger now, or set it to run nightly';
+    runBtn.addEventListener('click', openRunPanel);
+    const chip = document.createElement('span');
+    chip.id = 'at-run-chip'; chip.className = 'at-note';
+    head.append(title, sel, modes, pick, runBtn, chip);
+    atUpdateChip();
 
     const grid = document.createElement('div');
     grid.id = 'autotag-grid';
@@ -5135,7 +5152,7 @@ render();
       fillGrid(grid, list, (it, i) => buildAutotagCard(it, i, ctx));
     }
     head.appendChild(buildGridControls('autotag', grid, autotagViewEl));
-    autotagViewEl.append(head, grid);
+    autotagViewEl.append(head, grid, ...openPanels);
     observeGridPreviews(grid);
   }
 
@@ -5163,6 +5180,7 @@ render();
       if (main) main.parentNode.insertBefore(autotagViewEl, main); else document.body.appendChild(autotagViewEl);
     }
     autotagViewEl.style.display = 'flex';
+    atStartPolling();
     ensureArchiveDb();
     if (_dbCache) { renderAutotagView(); atLoad(); }
     else { renderAutotagView(); archiveDbPromise().catch(() => {}).then(() => { if (autotagTabActive) atLoad(); }); }
@@ -5289,6 +5307,116 @@ render();
     cover.appendChild(box);
   }
 
+  // ── Run panel: start the AI tagger and schedule it nightly. Starplayer only leaves a request; the
+  // autotagTT worker container runs its own fixed job and reports back through a status file. ──
+  function fmtAgo(t) {
+    if (!t) return 'never';
+    const s = Math.max(0, Date.now() / 1000 - t);
+    if (s < 90) return 'just now';
+    if (s < 5400) return Math.round(s / 60) + ' min ago';
+    if (s < 129600) return Math.round(s / 3600) + ' h ago';
+    return new Date(t * 1000).toLocaleDateString();
+  }
+
+  function atStateText(r) {
+    if (!r) return '';
+    if (!r.workerOnline) return 'AI tagger worker is offline';
+    if (r.state === 'queued') return 'Queued, starting shortly…';
+    if (r.state === 'running') return 'Running: ' + (r.phase || 'starting') + (r.detail ? ' (' + r.detail + ')' : '');
+    if (r.phase === 'failed') return 'Last run failed' + (r.error ? ': ' + r.error : '');
+    return 'Idle. Last run ' + fmtAgo(r.lastOk);
+  }
+
+  function atUpdateChip() {
+    const c = document.getElementById('at-run-chip');
+    if (c) c.textContent = atRun && (atRun.state !== 'idle' || !atRun.workerOnline) ? atStateText(atRun) : '';
+  }
+
+  async function atPollRun(done) {
+    let was = atRun && atRun.state;
+    try { atRun = await (await fetch('/api/autotag/run', { cache: 'no-store' })).json(); } catch (_) { return; }
+    atUpdateChip();
+    const panel = document.getElementById('at-run-panel');
+    if (panel && panel._render) panel._render();
+    if (was && was !== 'idle' && atRun.state === 'idle') { aiVideos = null; await atLoad(); }   // a run just finished: refresh
+    if (done) done();
+  }
+
+  function atStartPolling() {
+    clearInterval(atRunTimer);
+    atPollRun();
+    atRunTimer = setInterval(() => {
+      if (!autotagTabActive) { clearInterval(atRunTimer); atRunTimer = null; return; }
+      atPollRun();
+    }, 3000);
+  }
+
+  function openRunPanel() {
+    const old = document.getElementById('at-run-panel');
+    if (old) { old.remove(); return; }
+    const panel = document.createElement('div');
+    panel.id = 'at-run-panel';
+    panel.className = 'at-popup';
+    const h = document.createElement('div');
+    h.className = 'at-picker-head'; h.textContent = 'AI tagger';
+    const status = document.createElement('div');
+    status.className = 'at-run-status';
+    const run = document.createElement('button');
+    run.className = 'at-mode on'; run.textContent = 'Run now';
+    run.addEventListener('click', async () => {
+      run.disabled = true;
+      try {
+        const r = await fetch('/api/autotag/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        if (!r.ok && r.status !== 409 && r.status !== 429) throw new Error(r.status);
+      } catch (_) { status.textContent = 'Could not request a run.'; }
+      atPollRun();
+    });
+    const results = document.createElement('div');
+    results.className = 'at-run-results';
+    const sched = document.createElement('div');
+    sched.className = 'at-run-sched';
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.id = 'at-sched-on';
+    const lab = document.createElement('label'); lab.htmlFor = 'at-sched-on'; lab.textContent = 'Run every night at';
+    const hour = document.createElement('select');
+    for (let i = 0; i < 24; i++) { const o = document.createElement('option'); o.value = i; o.textContent = String(i).padStart(2, '0') + ':00'; hour.appendChild(o); }
+    const msg = document.createElement('span'); msg.className = 'at-note';
+    const saveSched = async () => {
+      try {
+        const r = await fetch('/api/autotag/schedule', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: cb.checked, hour: parseInt(hour.value, 10) }) });
+        msg.textContent = r.ok ? 'Saved' : 'Could not save';
+      } catch (_) { msg.textContent = 'Could not save'; }
+    };
+    cb.addEventListener('change', saveSched); hour.addEventListener('change', saveSched);
+    sched.append(cb, lab, hour, msg);
+    const close = document.createElement('button');
+    close.className = 'at-mode'; close.textContent = 'Close';
+    close.addEventListener('click', () => panel.remove());
+    let schedLoaded = false;
+    panel._render = () => {
+      status.textContent = atStateText(atRun);
+      run.disabled = !atRun || !atRun.workerOnline || atRun.state !== 'idle';
+      if (atRun && !schedLoaded) { cb.checked = atRun.schedule.enabled; hour.value = String(atRun.schedule.hour); schedLoaded = true; }
+      results.innerHTML = '';
+      const res = atRun && atRun.result;
+      if (res) Object.entries(res).forEach(([tag, m]) => {
+        const row = document.createElement('div');
+        row.className = 'at-run-row';
+        const nm = document.createElement('span'); nm.textContent = groupDisplayName(tag);
+        const info = document.createElement('span'); info.className = 'at-note';
+        info.textContent = m.gate === 'weak' ? 'too weak to use' : (m.pending + ' to review, ' + m.ai_count + ' AI-tagged');
+        row.append(nm, info);
+        results.appendChild(row);
+      });
+    };
+    const foot = document.createElement('div');
+    foot.className = 'at-picker-foot';
+    foot.append(run, close);
+    panel.append(h, status, foot, results, sched);
+    autotagViewEl.appendChild(panel);
+    panel._render();
+    atPollRun();
+  }
+
   // ── Tag picker: which of your groups the autotagTT job should train and tag ──
   async function openTagPicker() {
     const old = document.getElementById('at-picker');
@@ -5303,7 +5431,7 @@ render();
     h.textContent = 'Tags for the AI tagger';
     const note = document.createElement('div');
     note.className = 'at-note';
-    note.textContent = 'Ticked groups are learned and suggested on the next autotagTT run. Choose visual, non-sensitive tags only; a group needs about 30 videos.';
+    note.textContent = 'This only saves your choice. Ticked groups are trained the next time the AI tagger runs (use Run… or wait for the nightly run); then they appear in the tag dropdown with suggestions. Choose visual, non-sensitive tags; a group needs about 30 videos.';
     const list = document.createElement('div');
     list.className = 'at-picker-list';
     [...groups].sort((a, b) => a.name.localeCompare(b.name)).forEach(g => {
@@ -5329,7 +5457,7 @@ render();
       try {
         const r = await fetch('/api/autotag/tags', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: [...sel] }) });
         if (!r.ok) throw new Error(r.status);
-        msg.textContent = 'Saved. Takes effect on the next run.';
+        msg.textContent = 'Saved. Not trained yet: use Run… or wait for the nightly run.'; atEnabled = [...sel]; renderAutotagView();
       } catch (_) { msg.textContent = 'Could not save.'; }
     });
     const close = document.createElement('button');
@@ -5685,6 +5813,12 @@ render();
       [data-cap="1"] .sp-bubble:nth-child(n+2), [data-cap="2"] .sp-bubble:nth-child(n+3),
       [data-cap="3"] .sp-bubble:nth-child(n+4), [data-cap="4"] .sp-bubble:nth-child(n+5) { display: none; }
       .sp-label-toggle { margin: 8px 10px 4px; align-self: flex-start; }
+      .at-popup { position: absolute; top: 52px; right: 12px; z-index: 20; width: min(340px, calc(100% - 24px)); max-height: 70%; overflow: auto; background: #1e1e1e; border: 1px solid #555; border-radius: 8px; padding: 10px; box-shadow: 0 4px 20px rgba(0,0,0,.7); }
+      .at-run-status { font-size: 12px; color: #bbb; margin: 6px 0 10px; min-height: 16px; }
+      .at-run-results { margin: 10px 0; font-size: 13px; }
+      .at-run-row { display: flex; justify-content: space-between; gap: 10px; padding: 3px 0; }
+      .at-run-sched { display: flex; align-items: center; gap: 8px; font-size: 13px; border-top: 1px solid #333; padding-top: 10px; }
+      .at-run-sched select { background: #1e1e1e; border: 1px solid #444; border-radius: 6px; color: #ddd; padding: 2px 4px; }
       #at-picker { position: absolute; top: 52px; right: 12px; z-index: 20; width: min(340px, calc(100% - 24px)); max-height: 70%; overflow: auto; background: #1e1e1e; border: 1px solid #555; border-radius: 8px; padding: 10px; box-shadow: 0 4px 20px rgba(0,0,0,.7); }
       .at-picker-head { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
       .at-picker-list { max-height: 300px; overflow: auto; margin: 8px 0; }
