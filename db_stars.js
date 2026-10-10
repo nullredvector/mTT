@@ -219,6 +219,7 @@ const AT_DIR       = path.join(ARCHIVE_DIR, 'data', '.appdata', 'autotag');
 const REQUEST_FILE = path.join(AT_DIR, 'run_request.json');
 const STATUS_FILE  = path.join(AT_DIR, 'status.json');
 const SCHEDULE_FILE = path.join(AT_DIR, 'schedule.json');
+const HEARTBEAT_FILE = path.join(AT_DIR, 'heartbeat.json');
 const WORKER_ALIVE_S = 45;
 const MIN_REQUEST_GAP_S = 30;
 
@@ -229,7 +230,7 @@ function runStatus() {
   const queued = !!(req && typeof req.id === 'string' && req.id !== st.last_request_id);
   const sc = readJson(SCHEDULE_FILE) || {};
   return {
-    workerOnline: typeof st.heartbeat === 'number' && now - st.heartbeat < WORKER_ALIVE_S,
+    workerOnline: Math.max(typeof st.heartbeat === 'number' ? st.heartbeat : 0, typeof (readJson(HEARTBEAT_FILE) || {}).t === 'number' ? readJson(HEARTBEAT_FILE).t : 0) > now - WORKER_ALIVE_S,
     state: st.state === 'running' ? 'running' : (queued ? 'queued' : 'idle'),
     phase: st.phase || null, detail: st.detail || '', error: st.error || null,
     reason: st.reason || null, started: st.started || null, finished: st.finished || null, lastOk: st.last_ok || null,

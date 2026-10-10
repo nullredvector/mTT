@@ -5163,12 +5163,39 @@ render();
         const name = atGroupName(atTag);
         if (!inQuickGroup(id, name)) toggleQuickGroup(id, name);
       }
-      await atLoad();
+      atApplyLocal(id, decision);
     } catch (_) {
       card.querySelectorAll('.at-btn').forEach(b => { b.disabled = false; });
       atError = 'Could not save that decision; nothing was changed.';
       renderAutotagView();
     } finally { atBusy.delete(id); }
+  }
+
+  // Move one video between the pending / not sure / accepted / rejected lists without rebuilding the grid,
+  // so the scroll position and the card under the mouse stay where they are.
+  function atApplyLocal(id, decision) {
+    if (!atData) return;
+    const names = ['pending', 'unsure', 'accepted', 'rejected'];
+    const src = names.find(n => (atData[n] || []).some(x => x.id === id));
+    if (!src) return;
+    const item = atData[src].find(x => x.id === id);
+    // New arrays on purpose: the grid is still lazily filling from the old one
+    atData[src] = atData[src].filter(x => x.id !== id);
+    atData[decision] = [item, ...(atData[decision] || [])];
+    const grid = document.getElementById('autotag-grid');
+    if (src === atMode && grid) {
+      grid.querySelector('[data-id="' + id + '"]')?.remove();
+      if (!grid.querySelector('.stars-grid-card') && !grid.querySelector('.grid-sentinel')) {
+        const d = document.createElement('div'); d.id = 'autotag-msg';
+        d.textContent = atMode === 'pending' ? 'All reviewed. Nothing pending for "' + atTag + '".' : 'Nothing here now.';
+        grid.appendChild(d);
+      }
+    }
+    const labels = { pending: 'Pending', accepted: 'Accepted', rejected: 'Rejected', unsure: 'Not sure' };
+    document.querySelectorAll('#autotag-head .at-mode').forEach(b => {
+      const m = names.find(n => b.textContent.startsWith(labels[n]));
+      if (m) b.textContent = labels[m] + ' ' + (atData[m] || []).length;
+    });
   }
 
   function buildAutotagCard(item, idx, list) {
@@ -5280,7 +5307,10 @@ render();
     runBtn.addEventListener('click', openRunPanel);
     const chip = document.createElement('span');
     chip.id = 'at-run-chip'; chip.className = 'at-note';
-    head.append(title, sel, modes, pick, runBtn, chip);
+    const row1 = document.createElement('div'); row1.className = 'at-row';
+    const row2 = document.createElement('div'); row2.className = 'at-row';
+    row1.append(title, sel, modes, pick, runBtn);
+    head.append(row1, row2);
     atUpdateChip();
 
     const grid = document.createElement('div');
@@ -5301,7 +5331,7 @@ render();
       });
       fillGrid(grid, list, (it, i) => buildAutotagCard(it, i, ctx));
     }
-    head.appendChild(buildGridControls('autotag', grid, autotagViewEl));
+    row2.append(buildGridControls('autotag', grid, autotagViewEl), chip);
     autotagViewEl.append(head, grid, ...openPanels);
     observeGridPreviews(grid);
   }
@@ -5417,7 +5447,6 @@ render();
         if (!inQuickGroup(id, name)) toggleQuickGroup(id, name);   // re-renders the stars view
       }
       if (bubble.isConnected) bubble.remove();
-      if (autotagTabActive) atLoad();
     } catch (_) {
       bubble._busy = false;
       bubble.classList.remove('busy');
@@ -5942,7 +5971,12 @@ render();
       }
 
       #autotag-view { display: none; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; position: relative; }
-      #autotag-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 12px 18px 10px; flex-shrink: 0; border-bottom: 1px solid #333; }
+      /* two fixed rows that never wrap, so the cards below never move when the window or the status text changes */
+      #autotag-head { display: flex; flex-direction: column; gap: 6px; padding: 10px 18px 8px; flex-shrink: 0; border-bottom: 1px solid #333; }
+      .at-row { display: flex; align-items: center; flex-wrap: nowrap; gap: 10px; height: 26px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+      .at-row::-webkit-scrollbar { display: none; }
+      .at-row > * { flex-shrink: 0; white-space: nowrap; }
+      .at-row > #at-run-chip { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
       #autotag-head select { background: #1e1e1e; border: 1px solid #444; border-radius: 12px; color: #ddd; font-size: 12px; padding: 2px 8px; height: 24px; }
       .at-modes { display: flex; gap: 6px; }
       .at-mode { background: rgba(255,255,255,.06); border: 1px solid #444; color: #999; border-radius: 12px; padding: 2px 10px; font-size: 12px; line-height: 18px; cursor: pointer; }
