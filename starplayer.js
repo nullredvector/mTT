@@ -2455,23 +2455,70 @@
     document.body.appendChild(hint);
   }
 
+  // The video in the phone feed that is currently showing, and who posted it
+  function feedAuthorName() {
+    const item = playerVideoList[playerColumnOffsets[0] || 0];
+    if (!item) return '';
+    const info = getVideoInfo(item.id);
+    return (info && info.authorName) || item.authorName || '';
+  }
+
+  // Swipe right on a username page: slide it away and go back to what was underneath
+  function swipeBackFromAuthor() {
+    const el = authorViewEl, id = activeAuthorId;
+    if (!el || !id) return;
+    el.style.transition = 'transform 0.2s ease';
+    el.style.transform = 'translateX(110vw)';
+    setTimeout(() => {
+      el.style.transition = '';
+      el.style.transform = '';
+      closeAuthorTab(id);
+    }, 200);
+  }
+
   function setupMobileSwipe() {
     initSwipeHint();
-    let _tsx = 0, _tsy = 0, _swipeDir = null, _swiping = false, _outEl = null;
+    // _ctx: where the touch started. 'author' = a username page (swipe right = back),
+    // 'feed' = the video feed (swipe left = that user's page), 'tabs' = the usual tab swipes,
+    // 'none' = controls such as the size slider, which must not be mistaken for a swipe.
+    let _tsx = 0, _tsy = 0, _swipeDir = null, _swiping = false, _outEl = null, _ctx = 'tabs';
 
     document.addEventListener('touchstart', e => {
       _tsx = e.touches[0].clientX;
       _tsy = e.touches[0].clientY;
       _swipeDir = null; _swiping = false;
-      _outEl = getSwipeViewEl();
+      const t = e.target;
+      if (t.closest && t.closest('input, .grid-controls, select, textarea')) _ctx = 'none';
+      else if (authorViewOpen() && authorViewEl.contains(t)) _ctx = 'author';
+      else if (playerViewEl && playerViewEl.style.display !== 'none' && playerViewEl.contains(t)) _ctx = 'feed';
+      else _ctx = 'tabs';
+      _outEl = _ctx === 'author' ? authorViewEl : getSwipeViewEl();
     }, { passive: true });
 
     document.addEventListener('touchmove', e => {
+      if (_ctx === 'none') return;
       const dx = e.touches[0].clientX - _tsx;
       const dy = e.touches[0].clientY - _tsy;
       if (!_swipeDir && (Math.abs(dx) > 8 || Math.abs(dy) > 8))
         _swipeDir = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
       if (_swipeDir !== 'h') return;
+      if (_ctx === 'author') {          // only a rightward drag does anything here (no tab switching)
+        if (dx > 0) { _swiping = true; authorViewEl.style.transform = `translateX(${dx * 0.5}px)`; }
+        return;
+      }
+      if (_ctx === 'feed' && dx < 0) {  // leftward drag on a video: hint the user page
+        const name = feedAuthorName();
+        _swiping = Boolean(name);
+        const hint = document.getElementById('sp-swipe-hint');
+        if (name && hint) {
+          hint.querySelector('.sp-sh-label').textContent = '@' + name;
+          hint.querySelector('.sp-sh-arrow').textContent = '›';
+          hint.style.left = 'auto'; hint.style.right = '0';
+          hint.style.borderRadius = '10px 0 0 10px';
+          hint.style.opacity = String(Math.min(1, Math.abs(dx) / 80));
+        }
+        return;
+      }
       const idx = MOBILE_TABS.indexOf(activeMobileTab);
       if ((dx < 0 && idx >= MOBILE_TABS.length - 1) || (dx > 0 && idx <= 0)) return;
       _swiping = true;
@@ -2483,6 +2530,22 @@
       const dx = e.changedTouches[0].clientX - _tsx;
       const dy = e.changedTouches[0].clientY - _tsy;
       hideSwipeHint();
+      if (_ctx === 'none') return;
+      const far = Math.abs(dx) >= 60 && Math.abs(dx) > Math.abs(dy);
+      if (_ctx === 'author') {
+        if (!_swiping) return;
+        if (dx > 0 && far) { swipeBackFromAuthor(); return; }
+        authorViewEl.style.transition = 'transform 0.2s ease';
+        authorViewEl.style.transform = '';
+        setTimeout(() => { if (authorViewEl) authorViewEl.style.transition = ''; }, 200);
+        return;
+      }
+      if (_ctx === 'feed' && dx < 0) {
+        if (!_swiping || !far) return;
+        const name = feedAuthorName();
+        if (name) openAuthorByName(name, () => requestAnimationFrame(() => applySwipeEnter(authorViewEl, 'left')));
+        return;
+      }
       if (!_swiping) return;
       if (Math.abs(dx) < 60 || Math.abs(dx) <= Math.abs(dy)) {
         // snap back
@@ -3878,13 +3941,13 @@ render();
     el.onclick = null;
   }
 
-  function openAuthorByName(name) {
+  function openAuthorByName(name, after) {
     if (!_dbCache) {
-      archiveDbPromise().then(() => openAuthorByName(name)).catch(() => {});
+      archiveDbPromise().then(() => openAuthorByName(name, after)).catch(() => {});
       return;
     }
     const id = authorIdForName(name);
-    if (id) showAuthorTab(id, name);
+    if (id) { showAuthorTab(id, name); if (after) after(); }
   }
 
   function authorViewOpen() {
