@@ -1,5 +1,6 @@
 services:
-  starplayer:
+  kashibox:
+    container_name: kashibox-container
     image: ghcr.io/nullredvector/starplayer:latest
     restart: unless-stopped
     ports:
