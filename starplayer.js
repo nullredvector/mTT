@@ -4603,6 +4603,7 @@ render();
         tabSessions = d.sessions;
         if (cur && !tabSessions.some(x => x.id === cur.id)) tabSessions.unshift(cur);
         try { localStorage.setItem('sp_sessions', JSON.stringify(tabSessions)); } catch (_) {}
+        if (dedupeSessions()) saveSessions();
       } else {
         saveSessions();   // first run against a server: push what is stored locally
       }
@@ -4610,14 +4611,44 @@ render();
     }).catch(() => { /* no server */ });
   })();
 
+  const sessionKey = s => (s.tabs || []).map(t => t.id).sort().join('|');
+
+  // Collapse sessions holding exactly the same set of tabs: named ones always stay; otherwise the newest wins.
+  // Returns true when something was removed.
+  function dedupeSessions() {
+    const groups = new Map();
+    tabSessions.forEach(s => {
+      const k = sessionKey(s);
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(s);
+    });
+    const drop = new Set();
+    groups.forEach(list => {
+      if (list.length < 2) return;
+      const named = list.filter(x => x.name);
+      const keep = named.length ? new Set(named) : new Set([list.reduce((a, b) => ((b.updatedAt || b.createdAt || 0) > (a.updatedAt || a.createdAt || 0) ? b : a))]);
+      list.forEach(x => { if (!keep.has(x)) drop.add(x); });
+    });
+    if (!drop.size) return false;
+    tabSessions = tabSessions.filter(x => !drop.has(x));
+    return true;
+  }
+
   function sessionLabel(s) {
     return s.name || s.tabs.map(t => '@' + t.name).join(', ');
   }
 
   // Called whenever the set of open username tabs changes
   function autosaveSession() {
+    if (isMobilePlayer()) return;   // on a phone a username page is a passing view, not a tab set worth saving
     if (!openAuthors.length) { currentSessionId = null; return; }  // the last non-empty state stays saved
     let s = tabSessions.find(x => x.id === currentSessionId);
+    if (!s) {
+      // the same set of tabs was saved before: carry on in that session instead of making a twin
+      const key = openAuthors.map(a => a.id).sort().join('|');
+      s = tabSessions.find(x => sessionKey(x) === key);
+      if (s) currentSessionId = s.id;
+    }
     if (!s) {
       s = { id: uid(), name: '', createdAt: Date.now(), tabs: [], activeId: null };
       tabSessions.unshift(s);
