@@ -2375,6 +2375,24 @@
     }
   }
 
+  // Let the page draw under the notch/status bar (viewport-fit=cover) and, when added to the Home Screen,
+  // use a translucent status bar so the video runs edge to edge.
+  function setupPhoneChrome() {
+    const meta = (name, content) => {
+      let m = document.querySelector(`meta[name="${name}"]`);
+      if (!m) { m = document.createElement('meta'); m.name = name; document.head.appendChild(m); }
+      m.content = content;
+      return m;
+    };
+    let vp = document.querySelector('meta[name="viewport"]');
+    if (!vp) vp = meta('viewport', 'width=device-width, initial-scale=1');
+    if (!/viewport-fit/.test(vp.content)) vp.content += ', viewport-fit=cover';
+    meta('apple-mobile-web-app-capable', 'yes');
+    meta('mobile-web-app-capable', 'yes');
+    meta('apple-mobile-web-app-status-bar-style', 'black-translucent');
+    meta('theme-color', '#000000');
+  }
+
   function createMobileNav() {
     if (document.getElementById('sp-mobile-nav')) return;
     const nav = document.createElement('div');
@@ -2469,32 +2487,49 @@
     return (info && info.authorName) || item.authorName || '';
   }
 
+  // Slide the username page (and the view under it, with a little parallax) to x px from the left edge.
+  // x = innerWidth: page fully off to the right; x = 0: page fully covering the screen.
+  function dragAuthorTo(x) {
+    const W = window.innerWidth || 1;
+    const under = getSwipeViewEl();
+    if (authorViewEl) { authorViewEl.style.transition = 'none'; authorViewEl.style.transform = `translateX(${x}px)`; }
+    if (under) { under.style.transition = 'none'; under.style.transform = `translateX(${-(W - x) * 0.3}px)`; }
+  }
+
+  // Finish a drag: glide the username page to x, then tidy up the inline styles and call done
+  function settleAuthorTo(x, done) {
+    const W = window.innerWidth || 1;
+    const under = getSwipeViewEl();
+    const ease = 'transform 0.26s cubic-bezier(.2,.8,.2,1)';
+    if (authorViewEl) { authorViewEl.style.transition = ease; authorViewEl.style.transform = `translateX(${x}px)`; }
+    if (under) { under.style.transition = ease; under.style.transform = `translateX(${-(W - x) * 0.3}px)`; }
+    setTimeout(() => {
+      [authorViewEl, under].forEach(n => { if (n) { n.style.transition = ''; n.style.transform = ''; } });
+      if (done) done();
+    }, 270);
+  }
+
   // Swipe right on a username page: slide it away and go back to what was underneath
   function swipeBackFromAuthor() {
-    const el = authorViewEl, id = activeAuthorId;
-    if (!el || !id) return;
-    el.style.transition = 'transform 0.2s ease';
-    el.style.transform = 'translateX(110vw)';
-    setTimeout(() => {
-      el.style.transition = '';
-      el.style.transform = '';
-      closeAuthorTab(id);
-    }, 200);
+    const id = activeAuthorId;
+    if (!authorViewEl || !id) return;
+    settleAuthorTo(window.innerWidth || 1, () => closeAuthorTab(id));
   }
 
   function setupMobileSwipe() {
     initSwipeHint();
-    // _ctx: where the touch started. 'author' = a username page (swipe right = back),
-    // 'feed' = the video feed (swipe left = that user's page), 'tabs' = the usual tab swipes,
-    // 'none' = controls such as the size slider, which must not be mistaken for a swipe.
-    let _tsx = 0, _tsy = 0, _swipeDir = null, _swiping = false, _outEl = null, _ctx = 'tabs';
+    // _ctx: where the touch started. 'author' = a username page (drag right = pull it off),
+    // 'feed' = the video feed (drag left = pull that user's page over), 'tabs' = the usual tab swipes,
+    // 'none' = controls such as the size slider or the seek bar, which must not be mistaken for a swipe.
+    let _tsx = 0, _tsy = 0, _tt = 0, _swipeDir = null, _swiping = false, _outEl = null, _ctx = 'tabs', _pull = null;
 
     document.addEventListener('touchstart', e => {
       _tsx = e.touches[0].clientX;
       _tsy = e.touches[0].clientY;
-      _swipeDir = null; _swiping = false;
+      _tt = Date.now();
+      _swipeDir = null; _swiping = false; _pull = null;
       const t = e.target;
-      if (t.closest && t.closest('input, .grid-controls, select, textarea')) _ctx = 'none';
+      if (t.closest && t.closest('input, .grid-controls, select, textarea, .sp-seek')) _ctx = 'none';
       else if (authorViewOpen() && authorViewEl.contains(t)) _ctx = 'author';
       else if (playerViewEl && playerViewEl.style.display !== 'none' && playerViewEl.contains(t)) _ctx = 'feed';
       else _ctx = 'tabs';
@@ -2508,21 +2543,21 @@
       if (!_swipeDir && (Math.abs(dx) > 8 || Math.abs(dy) > 8))
         _swipeDir = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
       if (_swipeDir !== 'h') return;
-      if (_ctx === 'author') {          // only a rightward drag does anything here (no tab switching)
-        if (dx > 0) { _swiping = true; authorViewEl.style.transform = `translateX(${dx * 0.5}px)`; }
+      const W = window.innerWidth || 1;
+      if (_ctx === 'author') {          // the page follows the finger; only a rightward drag does anything
+        if (dx > 0) { _swiping = true; dragAuthorTo(Math.min(W, dx)); }
         return;
       }
-      if (_ctx === 'feed' && dx < 0) {  // leftward drag on a video: hint the user page
-        const name = feedAuthorName();
-        _swiping = Boolean(name);
-        const hint = document.getElementById('sp-swipe-hint');
-        if (name && hint) {
-          hint.querySelector('.sp-sh-label').textContent = '@' + name;
-          hint.querySelector('.sp-sh-arrow').textContent = '›';
-          hint.style.left = 'auto'; hint.style.right = '0';
-          hint.style.borderRadius = '10px 0 0 10px';
-          hint.style.opacity = String(Math.min(1, Math.abs(dx) / 80));
+      if (_ctx === 'feed' && (dx < 0 || _pull)) {   // leftward drag on a video: the user's page rides in from the right
+        if (!_pull) {
+          const name = feedAuthorName();
+          const id = _dbCache && name ? authorIdForName(name) : null;
+          if (!id) return;
+          _pull = { id, wasOpen: openAuthors.some(a => a.id === id) };
+          showAuthorTab(id, name);
         }
+        _swiping = true;
+        dragAuthorTo(Math.max(0, Math.min(W, W + dx)));
         return;
       }
       const idx = MOBILE_TABS.indexOf(activeMobileTab);
@@ -2532,24 +2567,25 @@
       showSwipeHint(dx, idx);
     }, { passive: true });
 
-    document.addEventListener('touchend', e => {
-      const dx = e.changedTouches[0].clientX - _tsx;
-      const dy = e.changedTouches[0].clientY - _tsy;
+    function endTouch(dx, dy) {
       hideSwipeHint();
       if (_ctx === 'none') return;
-      const far = Math.abs(dx) >= 60 && Math.abs(dx) > Math.abs(dy);
+      const W = window.innerWidth || 1;
+      const vel = dx / Math.max(1, Date.now() - _tt);   // px per ms; fast flicks commit even when short
       if (_ctx === 'author') {
         if (!_swiping) return;
-        if (dx > 0 && far) { swipeBackFromAuthor(); return; }
-        authorViewEl.style.transition = 'transform 0.2s ease';
-        authorViewEl.style.transform = '';
-        setTimeout(() => { if (authorViewEl) authorViewEl.style.transition = ''; }, 200);
+        if (dx > W * 0.3 || (dx > 40 && vel > 0.5)) swipeBackFromAuthor();
+        else settleAuthorTo(0);
         return;
       }
-      if (_ctx === 'feed' && dx < 0) {
-        if (!_swiping || !far) return;
-        const name = feedAuthorName();
-        if (name) openAuthorByName(name, () => requestAnimationFrame(() => applySwipeEnter(authorViewEl, 'left')));
+      if (_pull) {
+        const p = _pull;
+        _pull = null;
+        if (-dx > W * 0.3 || (-dx > 40 && vel < -0.5)) {
+          settleAuthorTo(0);            // user page now covers the screen
+        } else {
+          settleAuthorTo(W, () => { if (p.wasOpen) hideAuthorView(true); else closeAuthorTab(p.id); });
+        }
         return;
       }
       if (!_swiping) return;
@@ -2562,7 +2598,11 @@
       const newTab = dx < 0 ? MOBILE_TABS[idx + 1] : MOBILE_TABS[idx - 1];
       if (!newTab) { if (_outEl) { _outEl.style.transform = ''; } return; }
       doSwipe(newTab, dx < 0 ? 'left' : 'right', _outEl);
+    }
+    document.addEventListener('touchend', e => {
+      endTouch(e.changedTouches[0].clientX - _tsx, e.changedTouches[0].clientY - _tsy);
     }, { passive: true });
+    document.addEventListener('touchcancel', () => endTouch(0, 0), { passive: true });
   }
 
   function numCols() { return window.innerWidth < 768 ? 1 : 3; }
@@ -3578,6 +3618,45 @@
 
     overlay.appendChild(ctrlLayer);
 
+    // Thin seek bar along the bottom edge, right above the tab bar; drag it to scrub the playing video
+    const seek = document.createElement('div');
+    seek.className = 'sp-seek';
+    seek.innerHTML = '<div class="sp-seek-track"><div class="sp-seek-fill"></div></div><div class="sp-seek-time"></div>';
+    const seekFill = seek.querySelector('.sp-seek-fill');
+    const seekTime = seek.querySelector('.sp-seek-time');
+    let scrubbing = false;
+    const fmtT = t => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+    function paintSeek() {
+      const v = currentVid;
+      if (!v || !v.duration || !isFinite(v.duration)) { seekFill.style.width = '0%'; return; }
+      seekFill.style.width = (Math.min(1, v.currentTime / v.duration) * 100) + '%';
+      if (scrubbing) seekTime.textContent = `${fmtT(v.currentTime)} / ${fmtT(v.duration)}`;
+    }
+    function scrubTo(clientX) {
+      const v = currentVid;
+      if (!v || !v.duration || !isFinite(v.duration)) return;
+      const r = seek.getBoundingClientRect();
+      v.currentTime = Math.max(0, Math.min(1, (clientX - r.left) / (r.width || 1))) * v.duration;
+      paintSeek();
+    }
+    seek.addEventListener('pointerdown', e => {
+      e.stopPropagation();
+      scrubbing = true;
+      seek.classList.add('scrubbing');
+      try { seek.setPointerCapture(e.pointerId); } catch (_) {}
+      scrubTo(e.clientX);
+    });
+    seek.addEventListener('pointermove', e => { if (scrubbing) scrubTo(e.clientX); });
+    const endScrub = () => { scrubbing = false; seek.classList.remove('scrubbing'); };
+    seek.addEventListener('pointerup', endScrub);
+    seek.addEventListener('pointercancel', endScrub);
+    ctrlLayer.appendChild(seek);
+    (function seekLoop() {
+      if (!overlay.isConnected) return;
+      paintSeek();
+      requestAnimationFrame(seekLoop);
+    })();
+
     // Called by IntersectionObserver each time a new slide becomes dominant
     function updateControls(item, vid) {
       currentItem = item;
@@ -3650,6 +3729,7 @@
       playerColumnOffsets[0] = winStart + idx;
       updateControls(renderList[idx], vid);
       vid._userPaused = false;
+      vid.parentElement?.classList.remove('sp-paused');
       startPlayback(vid);
       if (counter) counter.textContent = `${winStart + idx + 1} / ${total}`;
       // a little head start for the next video
@@ -3688,6 +3768,8 @@
       video.className = 'player-video';
       video.addEventListener('playing', () => { video.poster = ''; }, { once: true });
       video.addEventListener('playing', () => { slide.classList.remove('needs-tap'); });
+      video.addEventListener('loadedmetadata', () => { video.classList.toggle('sp-wide', video.videoWidth > video.videoHeight); });
+      video.addEventListener('timeupdate', () => { if (video === currentVid) paintSeek(); });
       video.addEventListener('ended',   () => {
         if (visit && visit.vid === video) visit.loops++;
         video.currentTime = 0; video.play().catch(() => {});
@@ -3701,8 +3783,8 @@
         const dy = e.changedTouches[0].clientY - _sty;
         // Tap only — overlay handles horizontal swipe, feed handles vertical scroll
         if (Math.abs(dx) < 15 && Math.abs(dy) < 15) {
-          if (video.paused) { video._userPaused = false; video.play().catch(() => {}); }
-          else { video._userPaused = true; video.pause(); }
+          if (video.paused) { video._userPaused = false; slide.classList.remove('sp-paused'); video.play().catch(() => {}); }
+          else { video._userPaused = true; slide.classList.add('sp-paused'); video.pause(); }
         }
       }, { passive: true });
 
@@ -5343,6 +5425,7 @@ render();
     scanCards();
 
     if (isMobilePlayer()) {
+      setupPhoneChrome();
       createMobileNav();
       setupMobileSwipe();
       // Show loading overlay immediately, then open player
@@ -6333,6 +6416,103 @@ render();
       /* Very small phones: 2-col star panel grid */
       @media (max-width: 360px) {
         #star-panel-grid { grid-template-columns: repeat(2, 1fr); }
+      }
+
+      /* ═══ PHONE UI v2: edge-to-edge feed, white icon buttons, seek bar above the tab bar ═══ */
+      .sp-seek { display: none; }
+      @media (max-width: 768px) {
+        :root {
+          --sp-nav-h: calc(77px + env(safe-area-inset-bottom, 0px));
+          --sp-top: env(safe-area-inset-top, 0px);
+        }
+        html, body { background: #000; }
+
+        /* tab bar: black, white icons, the active tab full white */
+        #sp-mobile-nav {
+          background: #000 !important; border-top: 1px solid rgba(255,255,255,.14) !important;
+          height: var(--sp-nav-h) !important;
+        }
+        .sp-nav-btn { color: rgba(255,255,255,.55); border-top: none !important; font-weight: 600; }
+        .sp-nav-btn.sp-active { color: #fff; }
+        .sp-nav-btn svg { width: 25px; height: 25px; }
+
+        /* every full-screen view stops at the tab bar and keeps clear of the notch */
+        #player-view { bottom: var(--sp-nav-h) !important; background: #000; }
+        #author-view, #autotag-view, #recents-grid-view { bottom: var(--sp-nav-h) !important; padding-top: var(--sp-top); box-sizing: border-box; }
+        #stars-view { bottom: var(--sp-nav-h) !important; padding-top: var(--sp-top) !important; box-sizing: border-box; }
+        #author-view { box-shadow: -10px 0 28px rgba(0,0,0,.55); will-change: transform; }
+        #player-view { will-change: transform; }
+
+        /* video fills the screen; only landscape clips letterbox */
+        #player-feed { background: #000; }
+        #player-view .player-video { object-fit: cover; }
+        #player-view .player-video.sp-wide { object-fit: contain; }
+        .player-slide.sp-paused::before {
+          content: ''; position: absolute; top: 50%; left: 50%; z-index: 3;
+          transform: translate(-30%, -50%); pointer-events: none;
+          border-style: solid; border-width: 28px 0 28px 48px;
+          border-color: transparent transparent transparent rgba(255,255,255,.8);
+          filter: drop-shadow(0 2px 6px rgba(0,0,0,.5));
+        }
+
+        /* soft shade behind the white text and icons */
+        #player-view #player-overlay-controls::before {
+          content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 280px;
+          background: linear-gradient(to top, rgba(0,0,0,.6), rgba(0,0,0,0)); pointer-events: none;
+        }
+        #player-view #player-overlay-controls::after {
+          content: ''; position: absolute; left: 0; right: 0; top: 0; height: calc(var(--sp-top) + 90px);
+          background: linear-gradient(to bottom, rgba(0,0,0,.4), rgba(0,0,0,0)); pointer-events: none;
+        }
+
+        /* action buttons: plain white icons, no circles */
+        #player-view #player-overlay-controls .player-ctrl-btn {
+          background: none !important; box-shadow: none !important; border-radius: 0;
+          width: 48px; height: 48px; font-size: 32px; line-height: 1; color: #fff; padding: 0;
+          filter: drop-shadow(0 1px 3px rgba(0,0,0,.65)); transform: none !important;
+        }
+        #player-view #player-overlay-controls .player-ctrl-btn svg { width: 32px; height: 32px; }
+        #player-view #player-overlay-controls .player-lvl-btn { font-size: 17px; font-weight: 800; }
+        #player-view #player-overlay-controls .player-star-btn.active { color: gold; }
+        #player-view #player-overlay-controls .player-ctrl-btn.braces-on { color: #4fc3f7; }
+        #player-view #player-overlay-controls .player-right-center {
+          right: 6px; bottom: 30px; gap: 4px; z-index: 1;
+        }
+        #player-view #player-overlay-controls .player-mute-btn {
+          top: calc(var(--sp-top) + 8px); right: 6px; bottom: auto; width: 44px; height: 44px;
+        }
+        #player-view #player-overlay-controls .player-mute-btn svg { width: 24px; height: 24px; }
+        #player-view #player-overlay-controls .player-overlay-close {
+          top: calc(var(--sp-top) + 8px); left: 6px; right: auto; width: 44px; height: 44px; font-size: 24px;
+        }
+        #player-view #player-overlay-controls .player-feed-mode {
+          top: calc(var(--sp-top) + 14px); left: 50%; transform: translateX(-50%);
+          background: none; color: #fff; font-weight: 700; font-size: 15px;
+          text-shadow: 0 1px 4px rgba(0,0,0,.7);
+        }
+
+        /* who and what, bottom-left like the reference */
+        #player-view #player-overlay-controls .player-author {
+          bottom: 70px; left: 14px; font-size: 17px; font-weight: 700; max-width: calc(100% - 90px);
+        }
+        #player-view #player-overlay-controls .player-caption {
+          bottom: 22px; left: 14px; font-size: 14px; color: #fff; max-width: calc(100% - 90px);
+        }
+
+        /* seek bar: a hairline along the bottom that grows under the finger */
+        .sp-seek {
+          display: block; position: absolute; left: 0; right: 0; bottom: 0; height: 26px;
+          z-index: 12; pointer-events: auto; touch-action: none; cursor: pointer;
+        }
+        .sp-seek-track { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: rgba(255,255,255,.28); transition: height .12s; }
+        .sp-seek-fill { height: 100%; width: 0; background: #fff; }
+        .sp-seek.scrubbing .sp-seek-track { height: 8px; }
+        .sp-seek-time {
+          position: absolute; left: 50%; bottom: 44px; transform: translateX(-50%);
+          font-size: 13px; font-weight: 700; color: #fff; text-shadow: 0 1px 4px rgba(0,0,0,.8);
+          opacity: 0; transition: opacity .12s; pointer-events: none;
+        }
+        .sp-seek.scrubbing .sp-seek-time { opacity: 1; }
       }
     `;
     document.head.appendChild(s);
