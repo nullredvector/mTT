@@ -2685,15 +2685,11 @@
     // Restore the original tab
     (prevTab || document.querySelector('nav div.likes'))?.click();
 
-    // Shuffle
-    for (let i = list.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [list[i], list[j]] = [list[j], list[i]];
-    }
+    const ordered = await orderHomeList(list);
 
-    console.log('[Player] total videos:', list.length);
+    console.log('[Player] total videos:', ordered.length);
     playerBuilding = false;
-    return list;
+    return ordered;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -2892,6 +2888,221 @@
     if (recentsGridEl) recentsGridEl.style.display = 'none';
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // WATCH LOG + RANKED FEED
+  // ═══════════════════════════════════════════════════════════════════════════
+  // How you watch is kept as counters per video (ids and numbers only): s = times shown,
+  // m = ms watched, k = quick skips, e = plays to the end (a replay counts again), t = last shown.
+  // They live in localStorage and go to /api/watch as deltas so every device adds to one picture.
+  // The ranker below never needs to know what any group is called: it only sees which videos
+  // share a group, how big the groups are, and which videos were starred or watched.
+
+  const WATCH_KEY = 'sp_watch';
+  const SKIP_MS   = 2500;
+  let watchStats  = {};      // id -> { s, m, k, e, t }
+  let watchDelta  = {};      // counters not yet sent to the server
+  let watchTimer  = null;
+  let endFeedVisit = null;   // set by the phone feed; closes the visit being timed
+
+  (function loadWatchLocal() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(WATCH_KEY) || 'null');
+      if (raw && typeof raw === 'object') { watchStats = raw.stats || {}; watchDelta = raw.delta || {}; }
+    } catch (_) {}
+  })();
+
+  function saveWatchLocal() {
+    try { localStorage.setItem(WATCH_KEY, JSON.stringify({ stats: watchStats, delta: watchDelta })); } catch (_) {}
+  }
+
+  function addCounters(target, id, d) {
+    const c = target[id] || (target[id] = { s: 0, m: 0, k: 0, e: 0, t: 0 });
+    c.s += d.s || 0; c.m += d.m || 0; c.k += d.k || 0; c.e += d.e || 0; c.t = Math.max(c.t || 0, d.t || 0);
+  }
+
+  function watchAdd(id, d) {
+    const full = { s: 0, m: 0, k: 0, e: 0, t: Date.now(), ...d };
+    addCounters(watchStats, id, full);
+    addCounters(watchDelta, id, full);
+    saveWatchLocal();
+    clearTimeout(watchTimer);
+    watchTimer = setTimeout(() => flushWatch(false), 20000);
+  }
+
+  function flushWatch(useBeacon) {
+    if (!Object.keys(watchDelta).length) return;
+    const sent = watchDelta;
+    const body = JSON.stringify({ delta: sent });
+    watchDelta = {};
+    saveWatchLocal();
+    const restore = () => { Object.entries(sent).forEach(([id, d]) => addCounters(watchDelta, id, d)); saveWatchLocal(); };
+    if (useBeacon && navigator.sendBeacon) {
+      if (!navigator.sendBeacon('/api/watch', new Blob([body], { type: 'application/json' }))) restore();
+      return;
+    }
+    fetch('/api/watch', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body })
+      .then(r => { if (!r.ok) throw new Error(r.status); })
+      .catch(restore);   // no server, or it failed: keep the counters for the next try
+  }
+
+  // The server's totals (all devices) plus whatever this device has not sent yet
+  const watchReady = fetch('/api/watch', { cache: 'no-store' })
+    .then(r => r.ok ? r.json() : null)
+    .then(d => {
+      if (!d || !d.watch) return;
+      const merged = JSON.parse(JSON.stringify(d.watch));
+      Object.entries(watchDelta).forEach(([id, x]) => addCounters(merged, id, x));
+      watchStats = merged;
+      saveWatchLocal();
+    })
+    .catch(() => { /* no server */ });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') { if (endFeedVisit) endFeedVisit(); flushWatch(true); }
+  });
+  window.addEventListener('pagehide', () => { if (endFeedVisit) endFeedVisit(); flushWatch(true); });
+
+  // ── Ranking ────────────────────────────────────────────────────────────────
+  // score = how much your own habits favour the video + a little novelty. Every number is here so
+  // it is easy to tune.
+  const RANK = {
+    lift: 1.0,         // groups whose videos you star more often than average pull their videos up
+    interest: 1.0,     // ...and so do groups you have put many videos in
+    star: 1.5, level: 0.3, liked: 1.2, disliked: -4,
+    engagement: 1.6,   // finishing/replaying lifts a video, skipping it quickly lowers it
+    unseen: 0.4,       // a small push for videos the feed has never shown
+    recent: -2.5, recentDays: 2,   // just shown: keep it out for a while
+    repeat: -0.2,      // shown many times overall
+    popularity: 0.15,  // like count from the archive, a gentle prior
+    temperature: 1.0,  // higher = more variety between runs
+    authorGap: 3,      // avoid the same author within this many videos
+    lookahead: 25,     // how far ahead to look for a different author
+    explore: 0.1,      // chance a slot in the first 200 is given to a random unseen video
+  };
+  const QUICK_POSITIVE = 'liked', QUICK_NEGATIVE = 'disliked';
+
+  // list: [{ id, ... }]. Returns a new array in feed order. rng/now are injectable for tests.
+  function rankVideos(list, rng, now) {
+    rng = rng || Math.random;
+    now = now || Date.now();
+    const n = list.length;
+    if (n < 2) return list.slice();
+    const d = _dbCache;
+    const inList = new Set(list.map(v => v.id));
+
+    // Group statistics over the videos being ranked
+    const starCount = list.reduce((k, v) => k + (stars[v.id] ? 1 : 0), 0);
+    const base = (starCount + 1) / (n + 2);
+    const PRIOR = 8;
+    const stat = [];
+    let maxN = 1;
+    const liked = new Set(), disliked = new Set();
+    const member = new Map();                      // video id -> [group ids that count as tags]
+    groups.forEach(g => {
+      const name = String(g.name).trim().toLowerCase();
+      if (name === QUICK_POSITIVE || name === QUICK_NEGATIVE) {
+        g.videoIds.forEach(id => (name === QUICK_POSITIVE ? liked : disliked).add(id));
+        return;
+      }
+      let ng = 0, sg = 0;
+      g.videoIds.forEach(id => {
+        if (!inList.has(id)) return;
+        ng++; if (stars[id]) sg++;
+        (member.get(id) || member.set(id, []).get(id)).push(g.id);
+      });
+      if (ng) { stat.push({ id: g.id, ng, sg }); if (ng > maxN) maxN = ng; }
+    });
+    const weight = new Map();
+    stat.forEach(({ id, ng, sg }) => {
+      const rate = (sg + PRIOR * base) / (ng + PRIOR);
+      // capped both ways: a group with no stars is not a dislike, and one huge lift must not drown the rest
+      const lift = Math.max(-1, Math.min(2, Math.log(rate / base)));
+      weight.set(id, RANK.lift * lift + RANK.interest * (Math.log1p(ng) / Math.log1p(maxN)));
+    });
+
+    let maxLog = 1;
+    if (d) list.forEach(v => { const x = d.videos[v.id]; if (x) maxLog = Math.max(maxLog, Math.log10(1 + (x.diggCount || 0))); });
+
+    const scored = list.map(item => {
+      const id = item.id;
+      const gs = member.get(id);
+      let sc = 0;
+      if (gs) sc = gs.reduce((a, g) => a + (weight.get(g) || 0), 0) / Math.sqrt(gs.length);
+      if (stars[id]) sc += RANK.star;
+      if (levels[id] != null) sc += RANK.level;
+      if (liked.has(id)) sc += RANK.liked;
+      if (disliked.has(id)) sc += RANK.disliked;
+      const w = watchStats[id];
+      if (w && w.s) {
+        sc += RANK.engagement * Math.max(-1.2, Math.min(1.2, (0.8 * w.e - 1.2 * w.k) / (w.s + 1)));
+        sc += RANK.recent * Math.exp(-((now - (w.t || 0)) / 864e5) / RANK.recentDays);
+        sc += RANK.repeat * Math.log1p(w.s);
+      } else sc += RANK.unseen;
+      const x = d && d.videos[id];
+      if (x) sc += RANK.popularity * (Math.log10(1 + (x.diggCount || 0)) / maxLog);
+      return { item, id, score: sc, author: x ? x.authorId : null };
+    });
+
+    // Sample an order in proportion to the scores (adds Gumbel noise), so every run differs
+    scored.forEach(r => { r.key = r.score / RANK.temperature - Math.log(-Math.log(Math.max(rng(), 1e-12))); });
+    scored.sort((a, b) => b.key - a.key);
+
+    // Spread authors out: take the best-ranked video whose author wasn't just shown
+    const out = [], recent = [], taken = new Uint8Array(n);
+    let head = 0;
+    while (out.length < n) {
+      while (taken[head]) head++;
+      let pick = head;
+      for (let j = head, seen = 0; j < n && seen < RANK.lookahead; j++) {
+        if (taken[j]) continue;
+        seen++;
+        if (!scored[j].author || !recent.includes(scored[j].author)) { pick = j; break; }
+      }
+      taken[pick] = 1;
+      out.push(scored[pick]);
+      recent.push(scored[pick].author);
+      if (recent.length > RANK.authorGap) recent.shift();
+    }
+
+    // A little exploration near the top so the feed can't lock itself in
+    const pool = [];
+    out.forEach((r, i) => { if (!watchStats[r.id] && !disliked.has(r.id)) pool.push(i); });
+    for (let i = 0; i < Math.min(200, n) && pool.length; i++) {
+      if (rng() < RANK.explore) {
+        const j = pool[Math.floor(rng() * pool.length)];
+        if (j > i) [out[i], out[j]] = [out[j], out[i]];
+      }
+    }
+    return out.map(r => r.item);
+  }
+
+  function shuffleList(list) {
+    const a = list.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  function feedMode() {
+    try { return localStorage.getItem('sp_feed_mode') === 'shuffle' ? 'shuffle' : 'ranked'; } catch (_) { return 'ranked'; }
+  }
+
+  // Order a list of candidate videos for the Home feed / pop-out player
+  async function orderHomeList(list) {
+    if (feedMode() !== 'ranked') return shuffleList(list);
+    try { await Promise.race([watchReady, new Promise(r => setTimeout(r, 1500))]); } catch (_) {}
+    return rankVideos(list);
+  }
+
+  // The Home feed's videos: from the archive database when it is available (fast, nothing flickers);
+  // otherwise the app's own lists are read (that switches tabs behind the scenes)
+  async function buildHomeList() {
+    try { const l = await buildVideoListFromDb(); if (l.length) return l; } catch (e) { console.warn('[Feed] database list failed', e); }
+    return buildVideoList();
+  }
+
   async function openPlayer() {
     if (!isMobilePlayer()) { launchPlayerWindow(); return; }
     if (starsTabActive) showMainContent();
@@ -2900,7 +3111,7 @@
     playerOpen = true;
     activeMobileTab = 'home'; updateMobileNavActive();
     showMobilePlayerLoading();
-    playerVideoList = await buildVideoList();
+    playerVideoList = await buildHomeList();
     if (!playerOpen) { hideMobilePlayerView(); return; }
     // If a specific video was requested (e.g. tapped from recents grid), put it first
     if (playerStartId) {
@@ -2942,11 +3153,7 @@
     add(((d.likes && d.likes.officialList) || []).filter(id => dl.has(id)), 'Likes');
     const bm = new Set((d.bookmarked && d.bookmarked.downloaded) || []);
     add(((d.bookmarked && d.bookmarked.officialList) || []).filter(id => bm.has(id)), 'Favorites');
-    for (let i = list.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [list[i], list[j]] = [list[j], list[i]];
-    }
-    return list;
+    return orderHomeList(list);
   }
 
   function closePlayer() {
@@ -2977,6 +3184,7 @@
   }
 
   function hideMobilePlayerView() {
+    if (endFeedVisit) endFeedVisit();
     if (!playerViewEl) return;
     // Pause any playing videos before hiding
     playerViewEl.querySelectorAll('video').forEach(v => v.pause());
@@ -3353,6 +3561,21 @@
       ctrlLayer.appendChild(closeBtn);
     }
 
+    // Home feed only: switch between the ranked order and a plain shuffle
+    if (activeMobileTab === 'home' && !playerReturnTab) {
+      const modeBtn = document.createElement('button');
+      modeBtn.className = 'player-feed-mode';
+      modeBtn.textContent = feedMode() === 'ranked' ? '★ Ranked' : '⤨ Shuffle';
+      modeBtn.title = 'Tap to switch between the ranked feed and a plain shuffle';
+      modeBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        try { localStorage.setItem('sp_feed_mode', feedMode() === 'ranked' ? 'shuffle' : 'ranked'); } catch (_) {}
+        closePlayer();
+        openPlayer();
+      });
+      ctrlLayer.appendChild(modeBtn);
+    }
+
     overlay.appendChild(ctrlLayer);
 
     // Called by IntersectionObserver each time a new slide becomes dominant
@@ -3404,10 +3627,26 @@
       });
     }
 
+    // Time how long each video is watched (see WATCH LOG): a visit starts when a slide becomes active
+    // and ends when another one does, or the feed closes or the page is hidden.
+    let visit = null;
+    function endVisit() {
+      if (!visit) return;
+      const v = visit;
+      visit = null;
+      const dur = v.vid.duration;
+      const ms = Math.min(Date.now() - v.t0, dur && isFinite(dur) ? dur * 3000 : 120000);
+      if (ms < 400) return;   // flicked past while scrolling: not a view
+      watchAdd(v.id, { s: 1, m: Math.round(ms), k: (v.loops === 0 && ms < SKIP_MS) ? 1 : 0, e: v.loops });
+    }
+    endFeedVisit = endVisit;
+
     // Make the slide at idx the active one: controls, counter, playback
     function activate(idx) {
       const vid = videoEls[idx];
       if (!vid) return;
+      endVisit();
+      visit = { id: renderList[idx].id, vid, t0: Date.now(), loops: 0 };
       playerColumnOffsets[0] = winStart + idx;
       updateControls(renderList[idx], vid);
       vid._userPaused = false;
@@ -3449,7 +3688,10 @@
       video.className = 'player-video';
       video.addEventListener('playing', () => { video.poster = ''; }, { once: true });
       video.addEventListener('playing', () => { slide.classList.remove('needs-tap'); });
-      video.addEventListener('ended',   () => { video.currentTime = 0; video.play().catch(() => {}); });
+      video.addEventListener('ended',   () => {
+        if (visit && visit.vid === video) visit.loops++;
+        video.currentTime = 0; video.play().catch(() => {});
+      });
       video.addEventListener('contextmenu', e => { e.preventDefault(); video.paused ? video.play().catch(() => {}) : video.pause(); });
 
       let _stx = 0, _sty = 0;
@@ -4017,6 +4259,7 @@ render();
       // Mobile: the view overlays whatever is underneath. A player launched from an
       // author view sits above it, so close that one; otherwise just silence the feed.
       if (playerReturnTab === '__author__') { closePlayer(); playerReturnTab = null; }
+      if (endFeedVisit) endFeedVisit();
       document.querySelectorAll('#player-view video').forEach(v => v.pause());
     } else {
       if (starsTabActive) {
@@ -5386,6 +5629,11 @@ render();
       .grid-size { width: 110px; height: 16px; margin: 0; accent-color: #aaa; cursor: pointer; }
       .preview-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
       .stars-grid-cover.is-playing::after { display: none; }
+      .player-feed-mode {
+        position: absolute; top: 12px; left: 12px; pointer-events: auto;
+        background: rgba(0,0,0,.55); color: #ddd; border: none; border-radius: 14px;
+        padding: 4px 11px; font-size: 12px; line-height: 18px; cursor: pointer;
+      }
       .player-slide.needs-tap::after {
         content: '▶'; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
         width: 64px; height: 64px; border-radius: 50%; background: rgba(0,0,0,.55); color: #fff;
