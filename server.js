@@ -149,6 +149,34 @@ http.createServer((req, res) => {
     return;
   }
 
+  // ── Watch statistics (feed ranking) ────────────────────────────────────────
+  if (pathname === '/api/watch') {
+    if (req.method === 'GET') {
+      const body = JSON.stringify({ watch: dbStars.loadWatch() });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Content-Length': Buffer.byteLength(body) });
+      res.end(body);
+      return;
+    }
+    if (req.method === 'POST' || req.method === 'PUT') {   // POST is what navigator.sendBeacon uses
+      let chunks = [], size = 0;
+      req.on('data', c => { size += c.length; if (size <= 2e6) chunks.push(c); });
+      req.on('end', () => {
+        try {
+          if (size > 2e6) throw new Error('too large');
+          const data = JSON.parse(Buffer.concat(chunks).toString());
+          const n = dbStars.mergeWatch(data.delta);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, updated: n }));
+        } catch (e) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end('{"error":"Invalid request"}');
+        }
+      });
+      return;
+    }
+    res.writeHead(405); res.end('Method not allowed'); return;
+  }
+
   // ── Tab sessions API ───────────────────────────────────────────────────────
   if (pathname === '/api/sessions') {
     if (req.method === 'GET') {

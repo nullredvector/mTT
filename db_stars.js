@@ -180,4 +180,37 @@ function loadAiTags() {
   return { available: true, generated: ai._meta ? ai._meta.generated || null : null, videos };
 }
 
-module.exports = { load, save, loadSessions, saveSessions, loadAutotag, recordFeedback, loadAiTags, loadTagsConfig, saveTagsConfig };
+// ── Watch statistics: how the user watches videos in the feed (video ids and counters only).
+// Fields per video: s = times shown, m = milliseconds watched, k = quick skips, e = times it played
+// to the end (a replay counts again), t = last time shown (ms since epoch). Clients send deltas,
+// so several devices can report without overwriting each other. ──
+const WATCH_FILE = path.join(ARCHIVE_DIR, 'data', '.appdata', 'watch.json');
+const num = (x, max) => { x = Number(x); return Number.isFinite(x) && x > 0 ? Math.min(Math.round(x), max) : 0; };
+
+function loadWatch() {
+  const raw = readJson(WATCH_FILE);
+  return raw && raw.watch && typeof raw.watch === 'object' && !Array.isArray(raw.watch) ? raw.watch : {};
+}
+
+// delta: { videoId: { s, m, k, e, t } } to add. Returns how many videos were updated.
+function mergeWatch(delta) {
+  if (!delta || typeof delta !== 'object' || Array.isArray(delta)) return 0;
+  const ids = Object.keys(delta).filter(isId).slice(0, 5000);
+  if (!ids.length) return 0;
+  const cur = loadWatch();
+  for (const id of ids) {
+    const d = delta[id] || {};
+    const c = cur[id] || { s: 0, m: 0, k: 0, e: 0, t: 0 };
+    c.s += num(d.s, 1000); c.m += num(d.m, 3600000); c.k += num(d.k, 1000); c.e += num(d.e, 1000);
+    c.t = Math.max(c.t || 0, num(d.t, 8.64e15));
+    cur[id] = c;
+  }
+  const dir = path.dirname(WATCH_FILE);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  const tmp = WATCH_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify({ watch: cur }), 'utf8');
+  fs.renameSync(tmp, WATCH_FILE);
+  return ids.length;
+}
+
+module.exports = { load, save, loadSessions, saveSessions, loadAutotag, recordFeedback, loadAiTags, loadTagsConfig, saveTagsConfig, loadWatch, mergeWatch };
