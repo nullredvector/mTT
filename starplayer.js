@@ -859,6 +859,7 @@
     // On mobile route to the scroll-snap feed instead of the small overlay
     if (isMobilePlayer()) {
       const fromAuthor = authorViewOpen();
+      if (activeMobileTab === 'home' && playerOpen && !playerReturnTab && playerViewEl && !homeStash) stashHomeFeed();
       playerReturnTab = fromAuthor ? '__author__'
                      : activeMobileTab === 'stars' ? 'stars'
                      : activeMobileTab === 'recents' ? 'recents'
@@ -2338,6 +2339,10 @@
   }
 
   function setMobileTab(tab, skipAnim) {
+    if (homeStash) {
+      if (playerOpen) closePlayer();
+      if (tab === 'home') restoreHomeStash(); else dropHomeStash();
+    }
     if (activeAuthorId) hideAuthorView(false);
     if (autotagTabActive && tab !== 'review') hideAutotagView();
     if (tab !== 'stars') releaseGridPreviews(starsViewEl);
@@ -2580,10 +2585,47 @@
 
   // A video opened from a grid (username page, Stars, Recents, Review) sits on top of that view
   function returnPlayerUnder() { return playerReturnTab === '__author__' ? authorViewEl : getSwipeViewEl(); }
+  // A video opened from a grid reuses the player container; park the Home feed so it comes back as it was
+  // (same videos, same place) instead of being rebuilt from the top.
+  let homeStash = null;
+  function stashHomeFeed() {
+    const el = playerViewEl;
+    if (!el) return;
+    const feedEl = el.querySelector('#player-feed');
+    if (endFeedVisit) endFeedVisit();
+    el.querySelectorAll('video').forEach(v => v.pause());
+    homeStash = { el, list: playerVideoList, offsets: playerColumnOffsets, win: playerWinStart, endVisit: endFeedVisit, feedEl };
+    el.id = 'player-view-parked';
+    el.style.visibility = 'hidden';
+    el.style.pointerEvents = 'none';
+    playerViewEl = null;
+  }
+  function restoreHomeStash() {
+    const h = homeStash;
+    if (!h) return;
+    homeStash = null;
+    if (playerViewEl && playerViewEl !== h.el) playerViewEl.remove();
+    playerViewEl = h.el;
+    h.el.id = 'player-view';
+    h.el.style.visibility = '';
+    h.el.style.pointerEvents = '';
+    h.el.style.zIndex = '';
+    h.el.style.display = 'flex';
+    playerVideoList = h.list; playerColumnOffsets = h.offsets; playerWinStart = h.win; endFeedVisit = h.endVisit;
+    playerOpen = true;
+    if (!authorViewOpen()) h.el.querySelectorAll('video')[(h.offsets[0] || 0) - h.win]?.play().catch(() => {});
+  }
+  function dropHomeStash() {
+    if (!homeStash) return;
+    homeStash.el.remove();
+    homeStash = null;
+  }
+
   function closeReturnPlayer() {
     const rt = playerReturnTab;
     closePlayer();
     playerReturnTab = null;
+    restoreHomeStash();
     if (rt && rt !== '__author__') setMobileTab(rt, true);
   }
 
@@ -3691,21 +3733,6 @@
     captionEl.className = 'player-caption';
     ctrlLayer.appendChild(captionEl);
 
-    // Close/back button — shown when player was launched from another tab (e.g. Stars)
-    if (playerReturnTab) {
-      const closeBtn = document.createElement('button');
-      closeBtn.className = 'player-ctrl-btn player-overlay-close';
-      closeBtn.textContent = '✕';
-      closeBtn.title = 'Close';
-      closeBtn.addEventListener('click', e => {
-        e.stopPropagation();
-        closePlayer();
-        if (playerReturnTab !== '__author__') setMobileTab(playerReturnTab);
-        playerReturnTab = null;
-      });
-      ctrlLayer.appendChild(closeBtn);
-    }
-
     // Home feed only: switch between the ranked order and a plain shuffle
     if (activeMobileTab === 'home' && !playerReturnTab) {
       const modeBtn = document.createElement('button');
@@ -4467,7 +4494,7 @@ render();
     if (isMobilePlayer()) {
       // Mobile: the view overlays whatever is underneath. A player launched from an
       // author view sits above it, so close that one; otherwise just silence the feed.
-      if (playerReturnTab === '__author__') { closePlayer(); playerReturnTab = null; }
+      if (playerReturnTab === '__author__') { closePlayer(); playerReturnTab = null; restoreHomeStash(); }
       if (endFeedVisit) endFeedVisit();
       document.querySelectorAll('#player-view video').forEach(v => v.pause());
       navPush('author');
@@ -6054,7 +6081,7 @@ render();
         #autotag-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; padding: 8px; }
         #autotag-head { padding: 8px 10px; }
         #author-view { position: fixed; inset: 0; bottom: calc(72px + env(safe-area-inset-bottom, 0px)); z-index: 3500; background: #0d0d0d; }
-        .author-view-close { display: block; flex-shrink: 0; }
+        .author-view-close { display: none; }   /* swipe right (or the browser's back) closes the page */
         /* the controls (play, size, sort buttons) get their own row under the title */
         #author-view-header { flex-wrap: wrap; align-items: center; row-gap: 6px; }
         #author-view-header .author-view-close { order: 1; margin-left: auto; }
