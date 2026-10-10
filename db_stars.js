@@ -49,7 +49,9 @@ function saveSessions(sessions) {
 // accepting adds the video to its group through the normal /api/stars flow in the browser. ──
 const AUTOTAG_FILE  = path.join(ARCHIVE_DIR, 'data', '.appdata', 'autotag', 'autotag.json');
 const FEEDBACK_FILE = path.join(ARCHIVE_DIR, 'data', '.appdata', 'autotag_feedback.json');
-const TAG_RE = /^[a-z0-9][a-z0-9 _-]{0,39}$/;
+const AI_FILE   = path.join(ARCHIVE_DIR, 'data', '.appdata', 'autotag', 'ai_tags.json');
+const TAGS_FILE = path.join(ARCHIVE_DIR, 'data', '.appdata', 'autotag_tags.json');
+const TAG_RE = /^[^\x00-\x1f\\<>"]{1,60}$/;   // tags are group names (lowercased); never used as file paths
 const ID_RE  = /^[A-Za-z0-9_-]{1,40}$/;
 const isId   = x => typeof x === 'string' && ID_RE.test(x);
 
@@ -102,7 +104,9 @@ function recordFeedback(tag, id, decision, change) {
   const fb = all[tag] || { accepted: [], rejected: [], unsure: [] };
   fb.unsure = fb.unsure || [];
   const known = (readJson(AUTOTAG_FILE) || {})[tag];
-  const isSuggested = Array.isArray(known) && known.some(x => x && x.id === id);
+  const ai = readJson(AI_FILE);
+  const isSuggested = (Array.isArray(known) && known.some(x => x && x.id === id))
+    || !!(ai && ai.videos && Array.isArray(ai.videos[id]) && ai.videos[id].some(t => Array.isArray(t) && t[0] === tag));
   const cur = fb.accepted.includes(id) ? 'accepted' : fb.rejected.includes(id) ? 'rejected' : fb.unsure.includes(id) ? 'unsure' : 'pending';
   if (!isSuggested && cur === 'pending') return { code: 404, error: 'unknown suggestion' };
   if (cur === decision) return { code: 200, ok: true, unchanged: true, status: cur };
@@ -123,4 +127,56 @@ function recordFeedback(tag, id, decision, change) {
   return { code: 200, ok: true, status: decision };
 }
 
-module.exports = { load, save, loadSessions, saveSessions, loadAutotag, recordFeedback };
+function writeOwnerOnly(file, obj) {
+  const dir = path.dirname(file);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  if (fs.existsSync(file)) fs.copyFileSync(file, file + '.bak');
+  const tmp = file + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(obj), { encoding: 'utf8', mode: 0o600 });
+  fs.renameSync(tmp, file);
+}
+
+// ── Which groups the user opted in to for training ("tag picker") ──
+function loadTagsConfig() {
+  const raw = readJson(TAGS_FILE);
+  const enabled = raw && Array.isArray(raw.enabled) ? raw.enabled.filter(t => typeof t === 'string' && TAG_RE.test(t)) : ['braces'];
+  return { enabled };
+}
+
+function saveTagsConfig(list) {
+  if (!Array.isArray(list) || list.length > 100) return { code: 400, error: 'bad list' };
+  const names = new Set(load().groups.map(g => String(g.name).trim().toLowerCase()));
+  const out = [];
+  for (const t of list) {
+    if (typeof t !== 'string') return { code: 400, error: 'bad tag' };
+    const n = t.trim().toLowerCase();
+    if (!TAG_RE.test(n)) return { code: 400, error: 'bad tag' };
+    if (!names.has(n)) return { code: 404, error: 'unknown group' };
+    if (!out.includes(n)) out.push(n);
+  }
+  try { writeOwnerOnly(TAGS_FILE, { enabled: out }); } catch (_) { return { code: 500, error: 'could not save' }; }
+  return { code: 200, ok: true, enabled: out };
+}
+
+// ── AI tags: model labels kept apart from human groups. Anything already reviewed (or already in a
+// human group of the same name) is dropped so a decision always wins over the model. ──
+function loadAiTags() {
+  const ai = readJson(AI_FILE);
+  if (!ai || typeof ai.videos !== 'object' || !ai.videos) return { available: false, videos: {} };
+  const fb = loadFeedback();
+  const decided = {};
+  for (const [tag, v] of Object.entries(fb)) decided[tag] = new Set([...v.accepted, ...v.rejected, ...v.unsure]);
+  const members = {};
+  for (const g of load().groups) members[String(g.name).trim().toLowerCase()] = new Set(g.videoIds);
+  const videos = {};
+  for (const [id, list] of Object.entries(ai.videos)) {
+    if (!isId(id) || !Array.isArray(list)) continue;
+    const keep = list.filter(t => Array.isArray(t) && typeof t[0] === 'string' && TAG_RE.test(t[0])
+      && !(decided[t[0]] && decided[t[0]].has(id)) && !(members[t[0]] && members[t[0]].has(id)))
+      .map(t => [t[0], Number(t[1]) || 0]);
+    if (keep.length) videos[id] = keep;
+  }
+  return { available: true, generated: ai._meta ? ai._meta.generated || null : null, videos };
+}
+
+module.exports = { load, save, loadSessions, saveSessions, loadAutotag, recordFeedback, loadAiTags, loadTagsConfig, saveTagsConfig };

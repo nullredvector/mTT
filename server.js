@@ -105,7 +105,19 @@ http.createServer((req, res) => {
     res.end(body);
     return;
   }
-  if (pathname === '/api/autotag/feedback') {
+  if (pathname === '/api/autotag/ai' && req.method === 'GET') {
+    const body = JSON.stringify(dbStars.loadAiTags());
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Content-Length': Buffer.byteLength(body) });
+    res.end(body);
+    return;
+  }
+  if (pathname === '/api/autotag/tags' && req.method === 'GET') {
+    const body = JSON.stringify(dbStars.loadTagsConfig());
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Content-Length': Buffer.byteLength(body) });
+    res.end(body);
+    return;
+  }
+  if (pathname === '/api/autotag/feedback' || pathname === '/api/autotag/tags') {
     if (req.method !== 'POST') { res.writeHead(405); res.end('Method not allowed'); return; }
     const sendJson = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
     const origin = req.headers['origin'];
@@ -113,8 +125,10 @@ http.createServer((req, res) => {
     if (origin) { try { sameOrigin = new URL(origin).host === req.headers['host']; } catch (_) { sameOrigin = false; } }
     if (!sameOrigin) return sendJson(403, { error: 'cross-origin request refused' });
     if (!/^application\/json/i.test(req.headers['content-type'] || '')) return sendJson(415, { error: 'JSON required' });
+    const isTags = pathname === '/api/autotag/tags';
+    const max = isTags ? 16384 : 4096;
     let size = 0, chunks = [], tooBig = false;
-    req.on('data', c => { size += c.length; if (size > 4096) tooBig = true; else chunks.push(c); });
+    req.on('data', c => { size += c.length; if (size > max) tooBig = true; else chunks.push(c); });
     req.on('end', () => {
       if (tooBig) return sendJson(413, { error: 'body too large' });
       let d;
@@ -122,11 +136,13 @@ http.createServer((req, res) => {
       if (!d || typeof d !== 'object' || Array.isArray(d)) return sendJson(400, { error: 'Invalid JSON' });
       let r;
       try {
-        r = dbStars.recordFeedback(
-          typeof d.tag === 'string' ? d.tag.toLowerCase() : '',
-          typeof d.id === 'string' ? d.id : '',
-          d.decision, d.change === true);
-      } catch (_) { r = { code: 500, error: 'could not save feedback' }; }  // no paths or details in the response
+        r = isTags
+          ? dbStars.saveTagsConfig(d.enabled)
+          : dbStars.recordFeedback(
+              typeof d.tag === 'string' ? d.tag.toLowerCase() : '',
+              typeof d.id === 'string' ? d.id : '',
+              d.decision, d.change === true);
+      } catch (_) { r = { code: 500, error: 'could not save' }; }  // no paths or details in the response
       const { code, ...rest } = r;
       sendJson(code, rest);
     });
