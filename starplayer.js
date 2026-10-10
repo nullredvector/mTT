@@ -877,6 +877,7 @@
       playerViewEl.style.zIndex = fromAuthor ? '3600' : '';
       setPreviewsSuspended(true);
       renderMobilePlayerContent();
+      if (playerReturnTab) navPush('player');
       return;
     }
 
@@ -2487,6 +2488,30 @@
     return (info && info.authorName) || item.authorName || '';
   }
 
+  // ── Browser history ↔ phone overlays ──────────────────────────────────────
+  // iOS treats a swipe right from the screen edge as "back". Every overlay (a username page, a video opened
+  // from a grid) therefore owns a history entry, so that gesture closes the overlay instead of leaving the page.
+  const navStack = [];
+  let navIgnorePop = 0;
+  function navPush(kind) {
+    if (!isMobilePlayer() || navStack.includes(kind)) return;
+    try { history.pushState({ sp: kind }, ''); navStack.push(kind); } catch (_) {}
+  }
+  // The overlay was closed by our own UI: take its history entry away again (quietly)
+  function navPopQuiet(kind) {
+    const i = navStack.lastIndexOf(kind);
+    if (i < 0) return;
+    const top = i === navStack.length - 1;
+    navStack.splice(i, 1);
+    if (top) { navIgnorePop++; try { history.back(); } catch (_) { navIgnorePop--; } }
+  }
+  window.addEventListener('popstate', () => {
+    if (navIgnorePop > 0) { navIgnorePop--; return; }
+    const kind = navStack.pop();
+    if (kind === 'author' && authorViewOpen()) closeAuthorTab(activeAuthorId);
+    else if (kind === 'player' && playerReturnTab) closeReturnPlayer();
+  });
+
   // Slide a top view (and the view under it, with a little parallax) to x px from the left edge.
   // x = innerWidth: top view fully off to the right; x = 0: fully covering the screen.
   function dragPair(top, under, x) {
@@ -3230,6 +3255,7 @@
 
   function closePlayer() {
     playerOpen = false;
+    navPopQuiet('player');
     closeVideoOverlay();
     document.getElementById('player-overlay')?.remove();
     hideMobilePlayerView();
@@ -4397,6 +4423,7 @@ render();
       if (playerReturnTab === '__author__') { closePlayer(); playerReturnTab = null; }
       if (endFeedVisit) endFeedVisit();
       document.querySelectorAll('#player-view video').forEach(v => v.pause());
+      navPush('author');
     } else {
       if (starsTabActive) {
         starsTabActive = false;
@@ -4424,6 +4451,7 @@ render();
     activeAuthorId = null;
     if (authorViewEl) authorViewEl.style.display = 'none';
     document.body.classList.remove('sp-author-open');
+    navPopQuiet('author');
     syncAuthorTabs();
     // A video opened from this page replaced the Home feed; rebuild it for the tab underneath
     if (isMobilePlayer() && activeMobileTab === 'home' && !playerOpen) openPlayer();
