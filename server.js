@@ -123,7 +123,7 @@ http.createServer((req, res) => {
     res.end(body);
     return;
   }
-  if (pathname === '/api/autotag/feedback' || pathname === '/api/autotag/tags' || pathname === '/api/autotag/run' || pathname === '/api/autotag/schedule') {
+  if (pathname === '/api/autotag/feedback' || pathname === '/api/autotag/tags' || pathname === '/api/autotag/run' || pathname === '/api/autotag/schedule' || pathname === '/api/autotag/notify-test') {
     if (req.method !== 'POST') { res.writeHead(405); res.end('Method not allowed'); return; }
     const sendJson = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
     const origin = req.headers['origin'];
@@ -144,6 +144,7 @@ http.createServer((req, res) => {
       let r;
       try {
         r = which === 'run' ? dbStars.requestRun()
+          : which === 'notify-test' ? dbStars.requestNotifyTest()
           : which === 'schedule' ? dbStars.saveSchedule(d)
           : isTags
           ? dbStars.saveTagsConfig(d.enabled)

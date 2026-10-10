@@ -859,6 +859,7 @@
     // On mobile route to the scroll-snap feed instead of the small overlay
     if (isMobilePlayer()) {
       const fromAuthor = authorViewOpen();
+      if (activeMobileTab === 'home' && playerOpen && !playerReturnTab && playerViewEl && !homeStash) stashHomeFeed();
       playerReturnTab = fromAuthor ? '__author__'
                      : activeMobileTab === 'stars' ? 'stars'
                      : activeMobileTab === 'recents' ? 'recents'
@@ -1325,7 +1326,7 @@
   // Fill a grid in chunks as the user scrolls instead of building every card at once.
   // A category can hold tens of thousands of videos; makeCard(item, index) is only called for
   // the ones that get near the viewport.
-  const GRID_CHUNK = 60;
+  const GRID_CHUNK = window.innerWidth < 768 ? 24 : 60;   // phones: fewer decoded covers at a time
   function fillGrid(grid, items, makeCard) {
     let next = 0;
     const sentinel = document.createElement('div');
@@ -2338,6 +2339,10 @@
   }
 
   function setMobileTab(tab, skipAnim) {
+    if (homeStash) {
+      if (playerOpen) closePlayer();
+      if (tab === 'home') restoreHomeStash(); else dropHomeStash();
+    }
     if (activeAuthorId) hideAuthorView(false);
     if (autotagTabActive && tab !== 'review') hideAutotagView();
     if (tab !== 'stars') releaseGridPreviews(starsViewEl);
@@ -2376,6 +2381,36 @@
     }
   }
 
+  // ── Crash breadcrumbs ─────────────────────────────────────────────────────
+  // A page iOS kills for memory leaves no error. The last steps are kept in localStorage, and if the
+  // previous visit never said goodbye (hidden/unloaded) a banner shows them on the next load.
+  function spTrace(msg) {
+    try {
+      const t = JSON.parse(localStorage.getItem('sp_trace') || '[]');
+      t.push(new Date().toISOString().slice(11, 23) + ' ' + msg);
+      while (t.length > 40) t.shift();
+      localStorage.setItem('sp_trace', JSON.stringify(t));
+    } catch (_) {}
+  }
+  function setupCrashWatch() {
+    let was = false;
+    try { was = localStorage.getItem('sp_alive') === '1'; localStorage.setItem('sp_alive', '1'); } catch (_) {}
+    const alive = v => { try { localStorage.setItem('sp_alive', v ? '1' : '0'); } catch (_) {} };
+    document.addEventListener('visibilitychange', () => { alive(document.visibilityState === 'visible'); spTrace('vis ' + document.visibilityState); });
+    window.addEventListener('pagehide', () => { alive(false); spTrace('pagehide'); });
+    window.addEventListener('error', e => spTrace('ERR ' + e.message + ' @' + (e.lineno || '')));
+    window.addEventListener('unhandledrejection', e => spTrace('REJ ' + String(e.reason).slice(0, 120)));
+    if (!was) return;
+    let t = [];
+    try { t = JSON.parse(localStorage.getItem('sp_trace') || '[]'); } catch (_) {}
+    const box = document.createElement('div');
+    box.id = 'sp-crash';
+    box.innerHTML = '<b>The page reloaded unexpectedly.</b> Last steps:<pre></pre><button>Dismiss</button>';
+    box.querySelector('pre').textContent = t.slice(-14).join('\n') || '(nothing recorded)';
+    box.querySelector('button').addEventListener('click', () => box.remove());
+    document.body.appendChild(box);
+  }
+
   // Let the page draw under the notch/status bar (viewport-fit=cover) and, when added to the Home Screen,
   // use a translucent status bar so the video runs edge to edge.
   function setupPhoneChrome() {
@@ -2392,6 +2427,7 @@
     meta('mobile-web-app-capable', 'yes');
     meta('apple-mobile-web-app-status-bar-style', 'black-translucent');
     meta('theme-color', '#000000');
+    setupCrashWatch();
   }
 
   function createMobileNav() {
@@ -2516,20 +2552,32 @@
   // x = innerWidth: top view fully off to the right; x = 0: fully covering the screen.
   function dragPair(top, under, x) {
     const W = window.innerWidth || 1;
-    if (top) { top.style.transition = 'none'; top.style.transform = `translateX(${x}px)`; }
+    if (top) { top._spx = x; top.style.transition = 'none'; top.style.transform = `translateX(${x}px)`; }
     if (under) { under.style.transition = 'none'; under.style.transform = `translateX(${-(W - x) * 0.3}px)`; }
   }
 
-  // Finish a drag: glide to x, then tidy up the inline styles and call done
+  // Finish a drag: glide to x with per-frame transforms (the same thing the drag itself does; a CSS transition
+  // on these two full-screen layers made some phones drop the page), then tidy up and call done
   function settlePair(top, under, x, done) {
     const W = window.innerWidth || 1;
-    const ease = 'transform 0.26s cubic-bezier(.2,.8,.2,1)';
-    if (top) { top.style.transition = ease; top.style.transform = `translateX(${x}px)`; }
-    if (under) { under.style.transition = ease; under.style.transform = `translateX(${-(W - x) * 0.3}px)`; }
-    setTimeout(() => {
+    const x0 = top && top._spx != null ? top._spx : (x === 0 ? W : 0);
+    const t0 = performance.now(), dur = 240;
+    let over = false;
+    const finish = () => {
+      if (over) return;
+      over = true;
       [top, under].forEach(n => { if (n) { n.style.transition = ''; n.style.transform = ''; } });
+      if (top) top._spx = null;
       if (done) done();
-    }, 270);
+    };
+    const frame = now => {
+      if (over) return;
+      const k = Math.min(1, (now - t0) / dur);
+      dragPair(top, under, x0 + (x - x0) * (1 - Math.pow(1 - k, 3)));
+      if (k < 1) requestAnimationFrame(frame); else finish();
+    };
+    requestAnimationFrame(frame);
+    setTimeout(finish, dur + 150);   // frames can stall (hidden tab); never leave the page half-way
   }
 
   function dragAuthorTo(x) { dragPair(authorViewEl, getSwipeViewEl(), x); }
@@ -2537,10 +2585,47 @@
 
   // A video opened from a grid (username page, Stars, Recents, Review) sits on top of that view
   function returnPlayerUnder() { return playerReturnTab === '__author__' ? authorViewEl : getSwipeViewEl(); }
+  // A video opened from a grid reuses the player container; park the Home feed so it comes back as it was
+  // (same videos, same place) instead of being rebuilt from the top.
+  let homeStash = null;
+  function stashHomeFeed() {
+    const el = playerViewEl;
+    if (!el) return;
+    const feedEl = el.querySelector('#player-feed');
+    if (endFeedVisit) endFeedVisit();
+    el.querySelectorAll('video').forEach(v => v.pause());
+    homeStash = { el, list: playerVideoList, offsets: playerColumnOffsets, win: playerWinStart, endVisit: endFeedVisit, feedEl };
+    el.id = 'player-view-parked';
+    el.style.visibility = 'hidden';
+    el.style.pointerEvents = 'none';
+    playerViewEl = null;
+  }
+  function restoreHomeStash() {
+    const h = homeStash;
+    if (!h) return;
+    homeStash = null;
+    if (playerViewEl && playerViewEl !== h.el) playerViewEl.remove();
+    playerViewEl = h.el;
+    h.el.id = 'player-view';
+    h.el.style.visibility = '';
+    h.el.style.pointerEvents = '';
+    h.el.style.zIndex = '';
+    h.el.style.display = 'flex';
+    playerVideoList = h.list; playerColumnOffsets = h.offsets; playerWinStart = h.win; endFeedVisit = h.endVisit;
+    playerOpen = true;
+    if (!authorViewOpen()) h.el.querySelectorAll('video')[(h.offsets[0] || 0) - h.win]?.play().catch(() => {});
+  }
+  function dropHomeStash() {
+    if (!homeStash) return;
+    homeStash.el.remove();
+    homeStash = null;
+  }
+
   function closeReturnPlayer() {
     const rt = playerReturnTab;
     closePlayer();
     playerReturnTab = null;
+    restoreHomeStash();
     if (rt && rt !== '__author__') setMobileTab(rt, true);
   }
 
@@ -2554,7 +2639,8 @@
   function swipeBackFromAuthor() {
     const id = activeAuthorId;
     if (!authorViewEl || !id) return;
-    settleAuthorTo(window.innerWidth || 1, () => closeAuthorTab(id));
+    spTrace('swipe back');
+    settleAuthorTo(window.innerWidth || 1, () => { spTrace('settled'); closeAuthorTab(id); spTrace('closed'); });
   }
 
   function setupMobileSwipe() {
@@ -2603,7 +2689,9 @@
           const id = _dbCache && name ? authorIdForName(name) : null;
           if (!id) return;
           _pull = { id, wasOpen: openAuthors.some(a => a.id === id) };
+          spTrace('pull start');
           showAuthorTab(id, name);
+          spTrace('pull shown');
         }
         _swiping = true; lockFeed(true); if (e.cancelable) e.preventDefault();
         dragAuthorTo(Math.max(0, Math.min(W, W + dx)));
@@ -2621,7 +2709,8 @@
       hideSwipeHint();
       if (_ctx === 'none') return;
       const W = window.innerWidth || 1;
-      const vel = dx / Math.max(1, Date.now() - _tt);   // px per ms; fast flicks commit even when short
+      const vel = dx / Math.max(1, Date.now() - _tt);
+      spTrace('touch end ' + _ctx + ' dx=' + Math.round(dx));   // px per ms; fast flicks commit even when short
       if (_ctx === 'author') {
         if (!_swiping) return;
         if (dx > W * 0.3 || (dx > 40 && vel > 0.5)) swipeBackFromAuthor();
@@ -3644,21 +3733,6 @@
     captionEl.className = 'player-caption';
     ctrlLayer.appendChild(captionEl);
 
-    // Close/back button — shown when player was launched from another tab (e.g. Stars)
-    if (playerReturnTab) {
-      const closeBtn = document.createElement('button');
-      closeBtn.className = 'player-ctrl-btn player-overlay-close';
-      closeBtn.textContent = '✕';
-      closeBtn.title = 'Close';
-      closeBtn.addEventListener('click', e => {
-        e.stopPropagation();
-        closePlayer();
-        if (playerReturnTab !== '__author__') setMobileTab(playerReturnTab);
-        playerReturnTab = null;
-      });
-      ctrlLayer.appendChild(closeBtn);
-    }
-
     // Home feed only: switch between the ranked order and a plain shuffle
     if (activeMobileTab === 'home' && !playerReturnTab) {
       const modeBtn = document.createElement('button');
@@ -4420,7 +4494,7 @@ render();
     if (isMobilePlayer()) {
       // Mobile: the view overlays whatever is underneath. A player launched from an
       // author view sits above it, so close that one; otherwise just silence the feed.
-      if (playerReturnTab === '__author__') { closePlayer(); playerReturnTab = null; }
+      if (playerReturnTab === '__author__') { closePlayer(); playerReturnTab = null; restoreHomeStash(); }
       if (endFeedVisit) endFeedVisit();
       document.querySelectorAll('#player-view video').forEach(v => v.pause());
       navPush('author');
@@ -4452,9 +4526,13 @@ render();
     if (authorViewEl) authorViewEl.style.display = 'none';
     document.body.classList.remove('sp-author-open');
     navPopQuiet('author');
+    spTrace('hide author');
+    // Free the page's thumbnails (the page is rebuilt every time it opens) before the feed starts decoding video again
+    if (isMobilePlayer() && authorViewEl) authorViewEl.textContent = '';
     syncAuthorTabs();
     // A video opened from this page replaced the Home feed; rebuild it for the tab underneath
     if (isMobilePlayer() && activeMobileTab === 'home' && !playerOpen) openPlayer();
+    spTrace('resume feed');
     if (resumePlayback && isMobilePlayer() && playerOpen && playerViewEl && playerViewEl.style.display !== 'none') {
       playerViewEl.querySelectorAll('video')[(playerColumnOffsets[0] || 0) - playerWinStart]?.play().catch(() => {});
     }
@@ -4603,6 +4681,7 @@ render();
         tabSessions = d.sessions;
         if (cur && !tabSessions.some(x => x.id === cur.id)) tabSessions.unshift(cur);
         try { localStorage.setItem('sp_sessions', JSON.stringify(tabSessions)); } catch (_) {}
+        if (dedupeSessions()) saveSessions();
       } else {
         saveSessions();   // first run against a server: push what is stored locally
       }
@@ -4610,14 +4689,44 @@ render();
     }).catch(() => { /* no server */ });
   })();
 
+  const sessionKey = s => (s.tabs || []).map(t => t.id).sort().join('|');
+
+  // Collapse sessions holding exactly the same set of tabs: named ones always stay; otherwise the newest wins.
+  // Returns true when something was removed.
+  function dedupeSessions() {
+    const groups = new Map();
+    tabSessions.forEach(s => {
+      const k = sessionKey(s);
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(s);
+    });
+    const drop = new Set();
+    groups.forEach(list => {
+      if (list.length < 2) return;
+      const named = list.filter(x => x.name);
+      const keep = named.length ? new Set(named) : new Set([list.reduce((a, b) => ((b.updatedAt || b.createdAt || 0) > (a.updatedAt || a.createdAt || 0) ? b : a))]);
+      list.forEach(x => { if (!keep.has(x)) drop.add(x); });
+    });
+    if (!drop.size) return false;
+    tabSessions = tabSessions.filter(x => !drop.has(x));
+    return true;
+  }
+
   function sessionLabel(s) {
     return s.name || s.tabs.map(t => '@' + t.name).join(', ');
   }
 
   // Called whenever the set of open username tabs changes
   function autosaveSession() {
+    if (isMobilePlayer()) return;   // on a phone a username page is a passing view, not a tab set worth saving
     if (!openAuthors.length) { currentSessionId = null; return; }  // the last non-empty state stays saved
     let s = tabSessions.find(x => x.id === currentSessionId);
+    if (!s) {
+      // the same set of tabs was saved before: carry on in that session instead of making a twin
+      const key = openAuthors.map(a => a.id).sort().join('|');
+      s = tabSessions.find(x => sessionKey(x) === key);
+      if (s) currentSessionId = s.id;
+    }
     if (!s) {
       s = { id: uid(), name: '', createdAt: Date.now(), tabs: [], activeId: null };
       tabSessions.unshift(s);
@@ -5054,12 +5163,39 @@ render();
         const name = atGroupName(atTag);
         if (!inQuickGroup(id, name)) toggleQuickGroup(id, name);
       }
-      await atLoad();
+      atApplyLocal(id, decision);
     } catch (_) {
       card.querySelectorAll('.at-btn').forEach(b => { b.disabled = false; });
       atError = 'Could not save that decision; nothing was changed.';
       renderAutotagView();
     } finally { atBusy.delete(id); }
+  }
+
+  // Move one video between the pending / not sure / accepted / rejected lists without rebuilding the grid,
+  // so the scroll position and the card under the mouse stay where they are.
+  function atApplyLocal(id, decision) {
+    if (!atData) return;
+    const names = ['pending', 'unsure', 'accepted', 'rejected'];
+    const src = names.find(n => (atData[n] || []).some(x => x.id === id));
+    if (!src) return;
+    const item = atData[src].find(x => x.id === id);
+    // New arrays on purpose: the grid is still lazily filling from the old one
+    atData[src] = atData[src].filter(x => x.id !== id);
+    atData[decision] = [item, ...(atData[decision] || [])];
+    const grid = document.getElementById('autotag-grid');
+    if (src === atMode && grid) {
+      grid.querySelector('[data-id="' + id + '"]')?.remove();
+      if (!grid.querySelector('.stars-grid-card') && !grid.querySelector('.grid-sentinel')) {
+        const d = document.createElement('div'); d.id = 'autotag-msg';
+        d.textContent = atMode === 'pending' ? 'All reviewed. Nothing pending for "' + atTag + '".' : 'Nothing here now.';
+        grid.appendChild(d);
+      }
+    }
+    const labels = { pending: 'Pending', accepted: 'Accepted', rejected: 'Rejected', unsure: 'Not sure' };
+    document.querySelectorAll('#autotag-head .at-mode').forEach(b => {
+      const m = names.find(n => b.textContent.startsWith(labels[n]));
+      if (m) b.textContent = labels[m] + ' ' + (atData[m] || []).length;
+    });
   }
 
   function buildAutotagCard(item, idx, list) {
@@ -5171,7 +5307,10 @@ render();
     runBtn.addEventListener('click', openRunPanel);
     const chip = document.createElement('span');
     chip.id = 'at-run-chip'; chip.className = 'at-note';
-    head.append(title, sel, modes, pick, runBtn, chip);
+    const row1 = document.createElement('div'); row1.className = 'at-row';
+    const row2 = document.createElement('div'); row2.className = 'at-row';
+    row1.append(title, sel, modes, pick, runBtn);
+    head.append(row1, row2);
     atUpdateChip();
 
     const grid = document.createElement('div');
@@ -5192,7 +5331,7 @@ render();
       });
       fillGrid(grid, list, (it, i) => buildAutotagCard(it, i, ctx));
     }
-    head.appendChild(buildGridControls('autotag', grid, autotagViewEl));
+    row2.append(buildGridControls('autotag', grid, autotagViewEl), chip);
     autotagViewEl.append(head, grid, ...openPanels);
     observeGridPreviews(grid);
   }
@@ -5308,7 +5447,6 @@ render();
         if (!inQuickGroup(id, name)) toggleQuickGroup(id, name);   // re-renders the stars view
       }
       if (bubble.isConnected) bubble.remove();
-      if (autotagTabActive) atLoad();
     } catch (_) {
       bubble._busy = false;
       bubble.classList.remove('busy');
@@ -5429,12 +5567,37 @@ render();
     };
     cb.addEventListener('change', saveSched); hour.addEventListener('change', saveSched);
     sched.append(cb, lab, hour, msg);
+    const notif = document.createElement('div');
+    notif.className = 'at-run-sched';
+    const notifText = document.createElement('span');
+    const notifBtn = document.createElement('button');
+    notifBtn.className = 'at-mode'; notifBtn.textContent = 'Send test';
+    const notifMsg = document.createElement('span'); notifMsg.className = 'at-note';
+    notifBtn.addEventListener('click', async () => {
+      notifBtn.disabled = true; notifMsg.textContent = 'Sending…';
+      const before = atRun && atRun.notifyTest ? atRun.notifyTest.id : null;
+      try {
+        const r = await fetch('/api/autotag/notify-test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        if (!r.ok) throw new Error(r.status);
+        for (let i = 0; i < 12; i++) {                         // the worker answers within a few seconds
+          await new Promise(res => setTimeout(res, 1500));
+          await atPollRun();
+          if (atRun && atRun.notifyTest && atRun.notifyTest.id !== before) { notifMsg.textContent = atRun.notifyTest.ok ? 'Sent. Check your phone.' : 'The server rejected it.'; break; }
+          if (i === 11) notifMsg.textContent = 'No answer from the worker.';
+        }
+      } catch (_) { notifMsg.textContent = 'Could not request a test.'; }
+      notifBtn.disabled = false;
+    });
+    notif.append(notifText, notifBtn, notifMsg);
     const close = document.createElement('button');
     close.className = 'at-mode'; close.textContent = 'Close';
     close.addEventListener('click', () => panel.remove());
     let schedLoaded = false;
     panel._render = () => {
       status.textContent = atStateText(atRun);
+      const nOn = !!(atRun && atRun.notifications);
+      notifText.textContent = nOn ? 'Phone notifications: on' : 'Phone notifications: off (set NTFY_URL on the worker)';
+      notifBtn.style.display = nOn ? '' : 'none';
       run.disabled = !atRun || !atRun.workerOnline || atRun.state !== 'idle';
       if (atRun && !schedLoaded) { cb.checked = atRun.schedule.enabled; hour.value = String(atRun.schedule.hour); schedLoaded = true; }
       results.innerHTML = '';
@@ -5452,7 +5615,7 @@ render();
     const foot = document.createElement('div');
     foot.className = 'at-picker-foot';
     foot.append(run, close);
-    panel.append(h, status, foot, results, sched);
+    panel.append(h, status, foot, results, sched, notif);
     autotagViewEl.appendChild(panel);
     panel._render();
     atPollRun();
@@ -5833,7 +5996,12 @@ render();
       }
 
       #autotag-view { display: none; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; position: relative; }
-      #autotag-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 12px 18px 10px; flex-shrink: 0; border-bottom: 1px solid #333; }
+      /* two fixed rows that never wrap, so the cards below never move when the window or the status text changes */
+      #autotag-head { display: flex; flex-direction: column; gap: 6px; padding: 10px 18px 8px; flex-shrink: 0; border-bottom: 1px solid #333; }
+      .at-row { display: flex; align-items: center; flex-wrap: nowrap; gap: 10px; height: 26px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+      .at-row::-webkit-scrollbar { display: none; }
+      .at-row > * { flex-shrink: 0; white-space: nowrap; }
+      .at-row > #at-run-chip { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
       #autotag-head select { background: #1e1e1e; border: 1px solid #444; border-radius: 12px; color: #ddd; font-size: 12px; padding: 2px 8px; height: 24px; }
       .at-modes { display: flex; gap: 6px; }
       .at-mode { background: rgba(255,255,255,.06); border: 1px solid #444; color: #999; border-radius: 12px; padding: 2px 10px; font-size: 12px; line-height: 18px; cursor: pointer; }
@@ -5972,7 +6140,7 @@ render();
         #autotag-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; padding: 8px; }
         #autotag-head { padding: 8px 10px; }
         #author-view { position: fixed; inset: 0; bottom: calc(72px + env(safe-area-inset-bottom, 0px)); z-index: 3500; background: #0d0d0d; }
-        .author-view-close { display: block; flex-shrink: 0; }
+        .author-view-close { display: none; }   /* swipe right (or the browser's back) closes the page */
         /* the controls (play, size, sort buttons) get their own row under the title */
         #author-view-header { flex-wrap: wrap; align-items: center; row-gap: 6px; }
         #author-view-header .author-view-close { order: 1; margin-left: auto; }
@@ -6637,6 +6805,10 @@ render();
         #star-panel-grid { grid-template-columns: repeat(2, 1fr); }
       }
 
+      #sp-crash { position: fixed; left: 8px; right: 8px; top: calc(env(safe-area-inset-top, 0px) + 8px); z-index: 99999;
+        background: #3a1010; color: #fff; border: 1px solid #a33; border-radius: 10px; padding: 10px 12px; font-size: 12px; }
+      #sp-crash pre { margin: 6px 0; max-height: 40vh; overflow: auto; font: 10px/1.35 monospace; white-space: pre-wrap; color: #fcc; }
+      #sp-crash button { background: #fff; color: #000; border: none; border-radius: 8px; padding: 6px 14px; font-weight: 700; }
       /* ═══ PHONE UI v2: edge-to-edge feed, white icon buttons, seek bar above the tab bar ═══ */
       .sp-seek { display: none; }
       @media (max-width: 768px) {
@@ -6659,8 +6831,7 @@ render();
         #player-view { bottom: var(--sp-nav-h) !important; background: #000; }
         #author-view, #autotag-view, #recents-grid-view { bottom: var(--sp-nav-h) !important; padding-top: var(--sp-top); box-sizing: border-box; }
         #stars-view { bottom: var(--sp-nav-h) !important; padding-top: var(--sp-top) !important; box-sizing: border-box; }
-        #author-view { box-shadow: -10px 0 28px rgba(0,0,0,.55); will-change: transform; }
-        #player-view { will-change: transform; }
+        #author-view { border-left: 1px solid rgba(255,255,255,.08); }
 
         /* video fills the screen; only landscape clips letterbox */
         #player-feed { background: #000; }
