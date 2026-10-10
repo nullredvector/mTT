@@ -1221,6 +1221,8 @@
   function applyThumbSize(grid, px) {
     grid.style.gridTemplateColumns = `repeat(auto-fill, minmax(${px}px, 1fr))`;
     grid.style.setProperty('--tool', Math.max(20, Math.min(32, Math.round(px * 0.15))) + 'px');
+    // How many label bubbles fit under a thumbnail of this width
+    grid.dataset.cap = String(px < 80 ? 1 : px < 120 ? 2 : px < 170 ? 3 : px < 230 ? 4 : 5);
   }
 
   // ── Sort order for the stars, username and review grids ──────────────────
@@ -1538,6 +1540,8 @@
       item.appendChild(countSpan);
       return item;
     }
+
+    sidebar.appendChild(buildLabelToggle());
 
     // ── Lvl nav item + numbered filter buttons ────────────────────────────────
     const lvlNavItem = makeSidebarItem('__lvl_groups__', 'lvl', '');
@@ -2061,6 +2065,7 @@
       grid.classList.add('preview-grid');
       mainHeader.appendChild(buildGridControls('stars', grid, starsViewEl));
       mobileTopRow.appendChild(buildGridControls('stars', grid, starsViewEl));
+      mobileTopRow.appendChild(buildLabelToggle());
     }
 
     mainArea.appendChild(grid);
@@ -2110,6 +2115,7 @@
     });
     if (activeView !== '__tagged__' && activeView !== '__disappeared__') cover.appendChild(rmBtn);
     cover.appendChild(buildThumbTools(star.id, star.coverSrc, authorName, desc));
+    appendLabelBubbles(cover, star.id);
 
     card.appendChild(cover);
     if (authorName) {
@@ -2455,23 +2461,70 @@
     document.body.appendChild(hint);
   }
 
+  // The video in the phone feed that is currently showing, and who posted it
+  function feedAuthorName() {
+    const item = playerVideoList[playerColumnOffsets[0] || 0];
+    if (!item) return '';
+    const info = getVideoInfo(item.id);
+    return (info && info.authorName) || item.authorName || '';
+  }
+
+  // Swipe right on a username page: slide it away and go back to what was underneath
+  function swipeBackFromAuthor() {
+    const el = authorViewEl, id = activeAuthorId;
+    if (!el || !id) return;
+    el.style.transition = 'transform 0.2s ease';
+    el.style.transform = 'translateX(110vw)';
+    setTimeout(() => {
+      el.style.transition = '';
+      el.style.transform = '';
+      closeAuthorTab(id);
+    }, 200);
+  }
+
   function setupMobileSwipe() {
     initSwipeHint();
-    let _tsx = 0, _tsy = 0, _swipeDir = null, _swiping = false, _outEl = null;
+    // _ctx: where the touch started. 'author' = a username page (swipe right = back),
+    // 'feed' = the video feed (swipe left = that user's page), 'tabs' = the usual tab swipes,
+    // 'none' = controls such as the size slider, which must not be mistaken for a swipe.
+    let _tsx = 0, _tsy = 0, _swipeDir = null, _swiping = false, _outEl = null, _ctx = 'tabs';
 
     document.addEventListener('touchstart', e => {
       _tsx = e.touches[0].clientX;
       _tsy = e.touches[0].clientY;
       _swipeDir = null; _swiping = false;
-      _outEl = getSwipeViewEl();
+      const t = e.target;
+      if (t.closest && t.closest('input, .grid-controls, select, textarea')) _ctx = 'none';
+      else if (authorViewOpen() && authorViewEl.contains(t)) _ctx = 'author';
+      else if (playerViewEl && playerViewEl.style.display !== 'none' && playerViewEl.contains(t)) _ctx = 'feed';
+      else _ctx = 'tabs';
+      _outEl = _ctx === 'author' ? authorViewEl : getSwipeViewEl();
     }, { passive: true });
 
     document.addEventListener('touchmove', e => {
+      if (_ctx === 'none') return;
       const dx = e.touches[0].clientX - _tsx;
       const dy = e.touches[0].clientY - _tsy;
       if (!_swipeDir && (Math.abs(dx) > 8 || Math.abs(dy) > 8))
         _swipeDir = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
       if (_swipeDir !== 'h') return;
+      if (_ctx === 'author') {          // only a rightward drag does anything here (no tab switching)
+        if (dx > 0) { _swiping = true; authorViewEl.style.transform = `translateX(${dx * 0.5}px)`; }
+        return;
+      }
+      if (_ctx === 'feed' && dx < 0) {  // leftward drag on a video: hint the user page
+        const name = feedAuthorName();
+        _swiping = Boolean(name);
+        const hint = document.getElementById('sp-swipe-hint');
+        if (name && hint) {
+          hint.querySelector('.sp-sh-label').textContent = '@' + name;
+          hint.querySelector('.sp-sh-arrow').textContent = '›';
+          hint.style.left = 'auto'; hint.style.right = '0';
+          hint.style.borderRadius = '10px 0 0 10px';
+          hint.style.opacity = String(Math.min(1, Math.abs(dx) / 80));
+        }
+        return;
+      }
       const idx = MOBILE_TABS.indexOf(activeMobileTab);
       if ((dx < 0 && idx >= MOBILE_TABS.length - 1) || (dx > 0 && idx <= 0)) return;
       _swiping = true;
@@ -2483,6 +2536,22 @@
       const dx = e.changedTouches[0].clientX - _tsx;
       const dy = e.changedTouches[0].clientY - _tsy;
       hideSwipeHint();
+      if (_ctx === 'none') return;
+      const far = Math.abs(dx) >= 60 && Math.abs(dx) > Math.abs(dy);
+      if (_ctx === 'author') {
+        if (!_swiping) return;
+        if (dx > 0 && far) { swipeBackFromAuthor(); return; }
+        authorViewEl.style.transition = 'transform 0.2s ease';
+        authorViewEl.style.transform = '';
+        setTimeout(() => { if (authorViewEl) authorViewEl.style.transition = ''; }, 200);
+        return;
+      }
+      if (_ctx === 'feed' && dx < 0) {
+        if (!_swiping || !far) return;
+        const name = feedAuthorName();
+        if (name) openAuthorByName(name, () => requestAnimationFrame(() => applySwipeEnter(authorViewEl, 'left')));
+        return;
+      }
       if (!_swiping) return;
       if (Math.abs(dx) < 60 || Math.abs(dx) <= Math.abs(dy)) {
         // snap back
@@ -3878,13 +3947,13 @@ render();
     el.onclick = null;
   }
 
-  function openAuthorByName(name) {
+  function openAuthorByName(name, after) {
     if (!_dbCache) {
-      archiveDbPromise().then(() => openAuthorByName(name)).catch(() => {});
+      archiveDbPromise().then(() => openAuthorByName(name, after)).catch(() => {});
       return;
     }
     const id = authorIdForName(name);
-    if (id) showAuthorTab(id, name);
+    if (id) { showAuthorTab(id, name); if (after) after(); }
   }
 
   function authorViewOpen() {
@@ -4553,10 +4622,10 @@ render();
     renderAutotagView();
   }
 
-  async function atSendFeedback(id, decision, change) {
+  async function atSendFeedback(id, decision, change, tag = atTag) {
     const r = await fetch('/api/autotag/feedback', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tag: atTag, id, decision, change: !!change }),
+      body: JSON.stringify({ tag, id, decision, change: !!change }),
     });
     if (!r.ok) throw new Error(r.status);
   }
@@ -4674,7 +4743,10 @@ render();
       b.addEventListener('click', () => { atMode = m; renderAutotagView(); });
       modes.appendChild(b);
     });
-    head.append(title, sel, modes);
+    const pick = document.createElement('button');
+    pick.className = 'at-mode'; pick.textContent = 'Tags…'; pick.title = 'Choose which of your groups the AI tagger learns';
+    pick.addEventListener('click', openTagPicker);
+    head.append(title, sel, modes, pick);
 
     const grid = document.createElement('div');
     grid.id = 'autotag-grid';
@@ -4735,6 +4807,171 @@ render();
     if (autotagViewEl) autotagViewEl.style.display = 'none';
     document.body.classList.remove('sp-autotag-open');
     document.querySelector('nav .autotag-tab')?.classList.remove('active');
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // LABEL BUBBLES — human group labels or AI tags under each Stars thumbnail
+  // AI tags are the model's guesses, kept apart from human groups. ✓ promotes one into the human
+  // group (explicit click only); ✕ records a rejection and never touches groups.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  let labelMode   = (() => { try { return localStorage.getItem('sp_label_mode') === 'ai' ? 'ai' : 'human'; } catch (_) { return 'human'; } })();
+  let aiVideos    = null;          // { videoId: [[tag, score], ...] } from /api/autotag/ai
+  let aiLoading   = false;
+  const aiDone    = new Set();     // "tag|id" decided in this session (hidden at once)
+
+  function loadAiVideos(force) {
+    if (aiLoading || (aiVideos && !force)) return;
+    aiLoading = true;
+    fetch('/api/autotag/ai', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(d => {
+      aiVideos = (d && d.videos) || {};
+    }).catch(() => { aiVideos = {}; }).finally(() => {
+      aiLoading = false;
+      if (starsTabActive && labelMode === 'ai') renderStarsView();
+    });
+  }
+
+  function buildLabelToggle() {
+    const wrap = document.createElement('div');
+    wrap.className = 'grid-sort sp-label-toggle';
+    wrap.setAttribute('role', 'group');
+    wrap.title = 'Labels shown under each thumbnail: your groups, or the AI tagger\'s guesses';
+    [['human', 'Human'], ['ai', 'AI']].forEach(([mode, text]) => {
+      const b = document.createElement('button');
+      b.className = 'grid-sort-btn' + (labelMode === mode ? ' on' : '');
+      b.textContent = text;
+      b.setAttribute('aria-pressed', labelMode === mode ? 'true' : 'false');
+      b.addEventListener('click', e => {
+        e.stopPropagation();
+        if (labelMode === mode) return;
+        labelMode = mode;
+        try { localStorage.setItem('sp_label_mode', mode); } catch (_) {}
+        if (mode === 'ai') loadAiVideos(true);
+        renderStarsView();
+      });
+      wrap.appendChild(b);
+    });
+    return wrap;
+  }
+
+  function groupDisplayName(tag) {
+    const g = groups.find(x => String(x.name).trim().toLowerCase() === tag);
+    return g ? g.name : tag;
+  }
+
+  function makeBubble(text, cls) {
+    const b = document.createElement('span');
+    b.className = 'sp-bubble ' + cls;
+    const t = document.createElement('span');
+    t.className = 'sp-bubble-name';
+    t.textContent = text;
+    b.appendChild(t);
+    return b;
+  }
+
+  async function aiBubbleDecide(bubble, id, tag, decision) {
+    if (bubble._busy) return;
+    bubble._busy = true;
+    bubble.classList.add('busy');
+    try {
+      await atSendFeedback(id, decision, false, tag);
+      aiDone.add(tag + '|' + id);
+      if (decision === 'accepted') {
+        const name = atGroupName(tag);
+        if (!inQuickGroup(id, name)) toggleQuickGroup(id, name);   // re-renders the stars view
+      }
+      if (bubble.isConnected) bubble.remove();
+      if (autotagTabActive) atLoad();
+    } catch (_) {
+      bubble._busy = false;
+      bubble.classList.remove('busy');
+      bubble.classList.add('err');
+      bubble.title = 'Could not save; nothing was changed';
+    }
+  }
+
+  function appendLabelBubbles(cover, videoId) {
+    const items = [];
+    if (labelMode === 'ai') {
+      if (!aiVideos) { loadAiVideos(); return; }
+      (aiVideos[videoId] || []).slice().sort((a, b) => b[1] - a[1]).forEach(([tag, score]) => {
+        if (aiDone.has(tag + '|' + videoId) || inQuickGroup(videoId, groupDisplayName(tag))) return;
+        items.push({ tag, score });
+      });
+    } else {
+      groups.forEach(g => { if (g.videoIds.includes(videoId)) items.push({ name: g.name }); });
+    }
+    if (!items.length) return;
+    const box = document.createElement('div');
+    box.className = 'sp-bubbles';
+    box.addEventListener('click', e => e.stopPropagation());
+    items.slice(0, 5).forEach(it => {
+      if (it.name != null) { box.appendChild(makeBubble(it.name, 'human')); return; }
+      const b = makeBubble(groupDisplayName(it.tag), 'ai');
+      b.title = 'AI tag "' + groupDisplayName(it.tag) + '" (score ' + it.score.toFixed(2) + '). ✓ add to your group, ✕ not this tag';
+      const ok = document.createElement('button');
+      ok.className = 'sp-bubble-act ok'; ok.textContent = '✓'; ok.title = 'Accept: add to "' + groupDisplayName(it.tag) + '"';
+      ok.addEventListener('click', e => { e.stopPropagation(); aiBubbleDecide(b, videoId, it.tag, 'accepted'); });
+      const no = document.createElement('button');
+      no.className = 'sp-bubble-act no'; no.textContent = '✕'; no.title = 'Reject: not ' + groupDisplayName(it.tag);
+      no.addEventListener('click', e => { e.stopPropagation(); aiBubbleDecide(b, videoId, it.tag, 'rejected'); });
+      b.append(ok, no);
+      box.appendChild(b);
+    });
+    cover.appendChild(box);
+  }
+
+  // ── Tag picker: which of your groups the autotagTT job should train and tag ──
+  async function openTagPicker() {
+    const old = document.getElementById('at-picker');
+    if (old) { old.remove(); return; }
+    let enabled = [];
+    try { enabled = (await (await fetch('/api/autotag/tags', { cache: 'no-store' })).json()).enabled || []; } catch (_) {}
+    const sel = new Set(enabled);
+    const panel = document.createElement('div');
+    panel.id = 'at-picker';
+    const h = document.createElement('div');
+    h.className = 'at-picker-head';
+    h.textContent = 'Tags for the AI tagger';
+    const note = document.createElement('div');
+    note.className = 'at-note';
+    note.textContent = 'Ticked groups are learned and suggested on the next autotagTT run. Choose visual, non-sensitive tags only; a group needs about 30 videos.';
+    const list = document.createElement('div');
+    list.className = 'at-picker-list';
+    [...groups].sort((a, b) => a.name.localeCompare(b.name)).forEach(g => {
+      const key = String(g.name).trim().toLowerCase();
+      const row = document.createElement('label');
+      row.className = 'at-picker-row';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.checked = sel.has(key);
+      cb.addEventListener('change', () => { cb.checked ? sel.add(key) : sel.delete(key); });
+      const nm = document.createElement('span');
+      nm.textContent = g.name;
+      const ct = document.createElement('span');
+      ct.className = 'at-note';
+      ct.textContent = g.videoIds.length + (g.videoIds.length < 30 ? ' (too few)' : '');
+      row.append(cb, nm, ct);
+      list.appendChild(row);
+    });
+    const msg = document.createElement('span');
+    msg.className = 'at-note';
+    const save = document.createElement('button');
+    save.className = 'at-mode on'; save.textContent = 'Save';
+    save.addEventListener('click', async () => {
+      try {
+        const r = await fetch('/api/autotag/tags', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: [...sel] }) });
+        if (!r.ok) throw new Error(r.status);
+        msg.textContent = 'Saved. Takes effect on the next run.';
+      } catch (_) { msg.textContent = 'Could not save.'; }
+    });
+    const close = document.createElement('button');
+    close.className = 'at-mode'; close.textContent = 'Close';
+    close.addEventListener('click', () => panel.remove());
+    const foot = document.createElement('div');
+    foot.className = 'at-picker-foot';
+    foot.append(save, close, msg);
+    panel.append(h, note, list, foot);
+    autotagViewEl.appendChild(panel);
   }
 
   function makeNavTab(className, svgPath, label, onClick) {
@@ -5056,7 +5293,7 @@ render();
         header:has(> nav) nav .session-tab { right: calc(var(--left-padding, 20px) + 112px); }
       }
 
-      #autotag-view { display: none; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+      #autotag-view { display: none; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; position: relative; }
       #autotag-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 12px 18px 10px; flex-shrink: 0; border-bottom: 1px solid #333; }
       #autotag-head select { background: #1e1e1e; border: 1px solid #444; border-radius: 12px; color: #ddd; font-size: 12px; padding: 2px 8px; height: 24px; }
       .at-modes { display: flex; gap: 6px; }
@@ -5065,6 +5302,25 @@ render();
       #autotag-grid { flex: 1; overflow-y: auto; padding: 14px 18px; display: grid; grid-template-columns: repeat(auto-fill,minmax(150px,1fr)); gap: 14px; align-content: start; }
       #autotag-msg { grid-column: 1 / -1; color: #888; text-align: center; padding: 40px 10px; font-size: 13px; line-height: 1.6; }
       .at-score { position: absolute; bottom: 4px; left: 4px; background: rgba(0,0,0,.7); color: #ddd; border-radius: 8px; padding: 1px 7px; font-size: 11px; pointer-events: none; z-index: 2; }
+      .sp-bubbles { position: absolute; left: 4px; right: 4px; bottom: 4px; z-index: 3; display: flex; flex-wrap: wrap; gap: 3px; align-items: flex-end; pointer-events: none; max-height: 70%; overflow: hidden; }
+      .sp-bubble { pointer-events: auto; display: inline-flex; align-items: center; max-width: 100%; background: rgba(0,0,0,.72); color: #ddd; border-radius: 10px; padding: 1px 7px; font-size: 11px; line-height: 16px; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
+      .sp-bubble.ai { background: rgba(60,40,120,.82); }
+      .sp-bubble-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .sp-bubble-act { display: none; border: none; background: none; color: #ddd; font-size: 12px; line-height: 16px; padding: 0 0 0 5px; cursor: pointer; }
+      .sp-bubble-act.ok:hover { color: #4caf50; } .sp-bubble-act.no:hover { color: #f44336; }
+      .sp-bubble:hover .sp-bubble-act { display: inline; }
+      .sp-bubble.busy { opacity: .5; } .sp-bubble.err { outline: 1px solid #f44336; }
+      @media (hover: none) { .sp-bubble-act { display: inline; } }
+      .stars-grid-cover .sp-bubble:nth-child(n+6) { display: none; }
+      [data-cap="1"] .sp-bubble:nth-child(n+2), [data-cap="2"] .sp-bubble:nth-child(n+3),
+      [data-cap="3"] .sp-bubble:nth-child(n+4), [data-cap="4"] .sp-bubble:nth-child(n+5) { display: none; }
+      .sp-label-toggle { margin: 8px 10px 4px; align-self: flex-start; }
+      #at-picker { position: absolute; top: 52px; right: 12px; z-index: 20; width: min(340px, calc(100% - 24px)); max-height: 70%; overflow: auto; background: #1e1e1e; border: 1px solid #555; border-radius: 8px; padding: 10px; box-shadow: 0 4px 20px rgba(0,0,0,.7); }
+      .at-picker-head { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+      .at-picker-list { max-height: 300px; overflow: auto; margin: 8px 0; }
+      .at-picker-row { display: flex; align-items: center; gap: 8px; padding: 4px 2px; font-size: 13px; cursor: pointer; }
+      .at-picker-row .at-note { margin-left: auto; }
+      .at-picker-foot { display: flex; align-items: center; gap: 8px; }
       .at-user { position: absolute; top: 6px; right: 6px; z-index: 5; max-width: 85%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: rgba(0,0,0,.7); color: #ddd; border-radius: 8px; padding: 1px 7px; font-size: 11px; }
       #autotag-view .thumb-tools { top: 30px; }
       .at-btn.unsure:hover { color: #ffc107; border-color: #ffc107; }
