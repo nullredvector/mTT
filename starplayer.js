@@ -2328,7 +2328,7 @@
 
   // ── Mobile tab state ───────────────────────────────────────────────────────
   const MOBILE_TABS = ['home', 'stars', 'recents', 'favs', 'review'];
-  let activeMobileTab = 'stars';   // the app opens on Stars (see showDefaultStarsView)
+  let activeMobileTab = 'home';    // the phone app opens on the Home feed (see showDefaultStarsView)
 
   function updateMobileNavActive() {
     document.querySelectorAll('#sp-mobile-nav .sp-nav-btn').forEach(btn => {
@@ -2487,26 +2487,42 @@
     return (info && info.authorName) || item.authorName || '';
   }
 
-  // Slide the username page (and the view under it, with a little parallax) to x px from the left edge.
-  // x = innerWidth: page fully off to the right; x = 0: page fully covering the screen.
-  function dragAuthorTo(x) {
+  // Slide a top view (and the view under it, with a little parallax) to x px from the left edge.
+  // x = innerWidth: top view fully off to the right; x = 0: fully covering the screen.
+  function dragPair(top, under, x) {
     const W = window.innerWidth || 1;
-    const under = getSwipeViewEl();
-    if (authorViewEl) { authorViewEl.style.transition = 'none'; authorViewEl.style.transform = `translateX(${x}px)`; }
+    if (top) { top.style.transition = 'none'; top.style.transform = `translateX(${x}px)`; }
     if (under) { under.style.transition = 'none'; under.style.transform = `translateX(${-(W - x) * 0.3}px)`; }
   }
 
-  // Finish a drag: glide the username page to x, then tidy up the inline styles and call done
-  function settleAuthorTo(x, done) {
+  // Finish a drag: glide to x, then tidy up the inline styles and call done
+  function settlePair(top, under, x, done) {
     const W = window.innerWidth || 1;
-    const under = getSwipeViewEl();
     const ease = 'transform 0.26s cubic-bezier(.2,.8,.2,1)';
-    if (authorViewEl) { authorViewEl.style.transition = ease; authorViewEl.style.transform = `translateX(${x}px)`; }
+    if (top) { top.style.transition = ease; top.style.transform = `translateX(${x}px)`; }
     if (under) { under.style.transition = ease; under.style.transform = `translateX(${-(W - x) * 0.3}px)`; }
     setTimeout(() => {
-      [authorViewEl, under].forEach(n => { if (n) { n.style.transition = ''; n.style.transform = ''; } });
+      [top, under].forEach(n => { if (n) { n.style.transition = ''; n.style.transform = ''; } });
       if (done) done();
     }, 270);
+  }
+
+  function dragAuthorTo(x) { dragPair(authorViewEl, getSwipeViewEl(), x); }
+  function settleAuthorTo(x, done) { settlePair(authorViewEl, getSwipeViewEl(), x, done); }
+
+  // A video opened from a grid (username page, Stars, Recents, Review) sits on top of that view
+  function returnPlayerUnder() { return playerReturnTab === '__author__' ? authorViewEl : getSwipeViewEl(); }
+  function closeReturnPlayer() {
+    const rt = playerReturnTab;
+    closePlayer();
+    playerReturnTab = null;
+    if (rt && rt !== '__author__') setMobileTab(rt, true);
+  }
+
+  // While a sideways pull is under way the feed must not scroll up or down
+  function lockFeed(on) {
+    const f = document.getElementById('player-feed');
+    if (f) f.style.overflowY = on ? 'hidden' : '';
   }
 
   // Swipe right on a username page: slide it away and go back to what was underneath
@@ -2521,17 +2537,17 @@
     // _ctx: where the touch started. 'author' = a username page (drag right = pull it off),
     // 'feed' = the video feed (drag left = pull that user's page over), 'tabs' = the usual tab swipes,
     // 'none' = controls such as the size slider or the seek bar, which must not be mistaken for a swipe.
-    let _tsx = 0, _tsy = 0, _tt = 0, _swipeDir = null, _swiping = false, _outEl = null, _ctx = 'tabs', _pull = null;
+    let _tsx = 0, _tsy = 0, _tt = 0, _swipeDir = null, _swiping = false, _outEl = null, _ctx = 'tabs', _pull = null, _under = null;
 
     document.addEventListener('touchstart', e => {
       _tsx = e.touches[0].clientX;
       _tsy = e.touches[0].clientY;
       _tt = Date.now();
-      _swipeDir = null; _swiping = false; _pull = null;
+      _swipeDir = null; _swiping = false; _pull = null; _under = null;
       const t = e.target;
       if (t.closest && t.closest('input, .grid-controls, select, textarea, .sp-seek')) _ctx = 'none';
       else if (authorViewOpen() && authorViewEl.contains(t)) _ctx = 'author';
-      else if (playerViewEl && playerViewEl.style.display !== 'none' && playerViewEl.contains(t)) _ctx = 'feed';
+      else if (playerViewEl && playerViewEl.style.display !== 'none' && playerViewEl.contains(t)) _ctx = playerReturnTab ? 'pr' : 'feed';
       else _ctx = 'tabs';
       _outEl = _ctx === 'author' ? authorViewEl : getSwipeViewEl();
     }, { passive: true });
@@ -2545,7 +2561,15 @@
       if (_swipeDir !== 'h') return;
       const W = window.innerWidth || 1;
       if (_ctx === 'author') {          // the page follows the finger; only a rightward drag does anything
-        if (dx > 0) { _swiping = true; dragAuthorTo(Math.min(W, dx)); }
+        if (dx > 0) { _swiping = true; if (e.cancelable) e.preventDefault(); dragAuthorTo(Math.min(W, dx)); }
+        return;
+      }
+      if (_ctx === 'pr') {              // a video opened from a grid: drag it off to the right to go back
+        if (dx > 0) {
+          if (!_under) _under = returnPlayerUnder();
+          _swiping = true; lockFeed(true); if (e.cancelable) e.preventDefault();
+          dragPair(playerViewEl, _under, Math.min(W, dx));
+        }
         return;
       }
       if (_ctx === 'feed' && (dx < 0 || _pull)) {   // leftward drag on a video: the user's page rides in from the right
@@ -2556,7 +2580,7 @@
           _pull = { id, wasOpen: openAuthors.some(a => a.id === id) };
           showAuthorTab(id, name);
         }
-        _swiping = true;
+        _swiping = true; lockFeed(true); if (e.cancelable) e.preventDefault();
         dragAuthorTo(Math.max(0, Math.min(W, W + dx)));
         return;
       }
@@ -2565,9 +2589,10 @@
       _swiping = true;
       if (_outEl) _outEl.style.transform = `translateX(${dx * 0.35}px)`;
       showSwipeHint(dx, idx);
-    }, { passive: true });
+    }, { passive: false });
 
     function endTouch(dx, dy) {
+      lockFeed(false);
       hideSwipeHint();
       if (_ctx === 'none') return;
       const W = window.innerWidth || 1;
@@ -2576,6 +2601,13 @@
         if (!_swiping) return;
         if (dx > W * 0.3 || (dx > 40 && vel > 0.5)) swipeBackFromAuthor();
         else settleAuthorTo(0);
+        return;
+      }
+      if (_ctx === 'pr') {
+        if (!_swiping) return;
+        const u = _under;
+        if (dx > W * 0.3 || (dx > 40 && vel > 0.5)) settlePair(playerViewEl, u, W, closeReturnPlayer);
+        else settlePair(playerViewEl, u, 0);
         return;
       }
       if (_pull) {
@@ -3734,7 +3766,8 @@
       if (counter) counter.textContent = `${winStart + idx + 1} / ${total}`;
       // a little head start for the next video
       const next = videoEls[idx + 1];
-      if (next && next.preload === 'none') next.preload = 'metadata';
+      if (next && next.preload !== 'auto') next.preload = 'auto';
+      if (vid.preload !== 'auto') vid.preload = 'auto';
     }
 
     // Safety net for the observer: once scrolling settles, the slide in view must be the one playing
@@ -3764,11 +3797,18 @@
       video.preload = 'none';
       video.muted = currentMuted;
       video.playsInline = true;
-      video.poster = item.coverSrc;
       video.className = 'player-video';
-      video.addEventListener('playing', () => { video.poster = ''; }, { once: true });
+      // The cover image stays up until the first video frame is really on screen, so there is no black flash
+      const cover = document.createElement('img');
+      cover.className = 'player-cover';
+      cover.alt = '';
+      cover.src = item.coverSrc;
+      const dropCover = () => cover.classList.add('gone');
+      video.addEventListener('playing', () => {
+        if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(dropCover);
+        setTimeout(dropCover, 400);
+      }, { once: true });
       video.addEventListener('playing', () => { slide.classList.remove('needs-tap'); });
-      video.addEventListener('loadedmetadata', () => { video.classList.toggle('sp-wide', video.videoWidth > video.videoHeight); });
       video.addEventListener('timeupdate', () => { if (video === currentVid) paintSeek(); });
       video.addEventListener('ended',   () => {
         if (visit && visit.vid === video) visit.loops++;
@@ -3789,6 +3829,7 @@
       }, { passive: true });
 
       slide.appendChild(video);
+      slide.appendChild(cover);
       feed.appendChild(slide);
       videoEls.push(video);
     });
@@ -4371,6 +4412,8 @@ render();
     if (authorViewEl) authorViewEl.style.display = 'none';
     document.body.classList.remove('sp-author-open');
     syncAuthorTabs();
+    // A video opened from this page replaced the Home feed; rebuild it for the tab underneath
+    if (isMobilePlayer() && activeMobileTab === 'home' && !playerOpen) openPlayer();
     if (resumePlayback && isMobilePlayer() && playerOpen && playerViewEl && playerViewEl.style.display !== 'none') {
       playerViewEl.querySelectorAll('video')[(playerColumnOffsets[0] || 0) - playerWinStart]?.play().catch(() => {});
     }
@@ -5449,6 +5492,7 @@ render();
       return;
     }
     defaultViewShown = true;
+    if (isMobilePlayer()) { setMobileTab('home', true); return; }
     if (!starsTabActive && !logTabActive && !autotagTabActive && !activeAuthorId) showStarsTab();
   }
 
@@ -6445,8 +6489,10 @@ render();
 
         /* video fills the screen; only landscape clips letterbox */
         #player-feed { background: #000; }
-        #player-view .player-video { object-fit: cover; }
-        #player-view .player-video.sp-wide { object-fit: contain; }
+        /* never crop or stretch: the video keeps its own aspect ratio, pinned to the very top of the screen */
+        #player-view .player-video, #player-view .player-cover { object-fit: contain; object-position: center top; }
+        .player-cover { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; transition: opacity .12s; }
+        .player-cover.gone { opacity: 0; }
         .player-slide.sp-paused::before {
           content: ''; position: absolute; top: 50%; left: 50%; z-index: 3;
           transform: translate(-30%, -50%); pointer-events: none;
@@ -6474,6 +6520,9 @@ render();
         #player-view #player-overlay-controls .player-ctrl-btn svg { width: 32px; height: 32px; }
         #player-view #player-overlay-controls .player-lvl-btn { font-size: 17px; font-weight: 800; }
         #player-view #player-overlay-controls .player-star-btn.active { color: gold; }
+        #player-view #player-overlay-controls .player-thumb-up.active { color: #4caf50; }
+        #player-view #player-overlay-controls .player-thumb-down.active { color: #f44336; }
+        #player-view #player-overlay-controls .player-lvl-btn.active { color: #fe2c55; }
         #player-view #player-overlay-controls .player-ctrl-btn.braces-on { color: #4fc3f7; }
         #player-view #player-overlay-controls .player-right-center {
           right: 6px; bottom: 30px; gap: 4px; z-index: 1;
