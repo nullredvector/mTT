@@ -3716,6 +3716,16 @@
     // ── End fixed controls layer ─────────────────────────────────────────────
 
     const videoEls = [];
+    const coverEls = [];
+
+    // Only the covers around the playing slide are loaded: 60 full-size images decoded at once can
+    // exhaust a phone's memory (iOS then reloads the page, which looks like the feed refreshing).
+    function coverWindow(idx) {
+      coverEls.forEach((c, j) => {
+        if (Math.abs(j - idx) <= 2) { if (!c.getAttribute('src')) c.src = c._src; }
+        else if (c.getAttribute('src')) c.removeAttribute('src');
+      });
+    }
 
     // Start a video and cope with browsers refusing autoplay (common on phones):
     // - sound refused (e.g. after you unmuted, the next video has no tap of its own): play muted instead
@@ -3757,6 +3767,7 @@
       const vid = videoEls[idx];
       if (!vid) return;
       endVisit();
+      coverWindow(idx);
       visit = { id: renderList[idx].id, vid, t0: Date.now(), loops: 0 };
       playerColumnOffsets[0] = winStart + idx;
       updateControls(renderList[idx], vid);
@@ -3802,7 +3813,9 @@
       const cover = document.createElement('img');
       cover.className = 'player-cover';
       cover.alt = '';
-      cover.src = item.coverSrc;
+      cover.decoding = 'async';
+      cover._src = item.coverSrc;
+      coverEls.push(cover);
       const dropCover = () => cover.classList.add('gone');
       video.addEventListener('playing', () => {
         if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(dropCover);
