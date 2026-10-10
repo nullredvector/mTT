@@ -213,4 +213,46 @@ function mergeWatch(delta) {
   return ids.length;
 }
 
-module.exports = { load, save, loadSessions, saveSessions, loadAutotag, recordFeedback, loadAiTags, loadTagsConfig, saveTagsConfig, loadWatch, mergeWatch };
+// ── Run control. Starplayer only drops a request file and reads a status file; the autotagTT worker
+// container (which has the GPU) picks the request up and runs its own fixed job. Nothing here starts a process. ──
+const AT_DIR       = path.join(ARCHIVE_DIR, 'data', '.appdata', 'autotag');
+const REQUEST_FILE = path.join(AT_DIR, 'run_request.json');
+const STATUS_FILE  = path.join(AT_DIR, 'status.json');
+const SCHEDULE_FILE = path.join(AT_DIR, 'schedule.json');
+const WORKER_ALIVE_S = 45;
+const MIN_REQUEST_GAP_S = 30;
+
+function runStatus() {
+  const st = readJson(STATUS_FILE) || {};
+  const req = readJson(REQUEST_FILE);
+  const now = Date.now() / 1000;
+  const queued = !!(req && typeof req.id === 'string' && req.id !== st.last_request_id);
+  const sc = readJson(SCHEDULE_FILE) || {};
+  return {
+    workerOnline: typeof st.heartbeat === 'number' && now - st.heartbeat < WORKER_ALIVE_S,
+    state: st.state === 'running' ? 'running' : (queued ? 'queued' : 'idle'),
+    phase: st.phase || null, detail: st.detail || '', error: st.error || null,
+    reason: st.reason || null, started: st.started || null, finished: st.finished || null, lastOk: st.last_ok || null,
+    result: st.result || null,
+    schedule: { enabled: sc.enabled === true, hour: Number.isInteger(sc.hour) && sc.hour >= 0 && sc.hour <= 23 ? sc.hour : 3 },
+  };
+}
+
+function requestRun() {
+  const s = runStatus();
+  if (!s.workerOnline) return { code: 503, error: 'worker offline' };
+  if (s.state !== 'idle') return { code: 409, error: 'already ' + s.state };
+  const prev = readJson(REQUEST_FILE);
+  if (prev && typeof prev.ts === 'number' && Date.now() / 1000 - prev.ts < MIN_REQUEST_GAP_S) return { code: 429, error: 'too soon' };
+  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+  try { writeOwnerOnly(REQUEST_FILE, { id, ts: Date.now() / 1000 }); } catch (_) { return { code: 500, error: 'could not save' }; }
+  return { code: 200, ok: true };
+}
+
+function saveSchedule(d) {
+  if (!d || typeof d.enabled !== 'boolean' || !Number.isInteger(d.hour) || d.hour < 0 || d.hour > 23) return { code: 400, error: 'bad schedule' };
+  try { writeOwnerOnly(SCHEDULE_FILE, { enabled: d.enabled, hour: d.hour }); } catch (_) { return { code: 500, error: 'could not save' }; }
+  return { code: 200, ok: true };
+}
+
+module.exports = { load, save, loadSessions, saveSessions, loadAutotag, recordFeedback, loadAiTags, loadTagsConfig, saveTagsConfig, loadWatch, mergeWatch, runStatus, requestRun, saveSchedule };

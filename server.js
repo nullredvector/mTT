@@ -111,13 +111,19 @@ http.createServer((req, res) => {
     res.end(body);
     return;
   }
+  if (pathname === '/api/autotag/run' && req.method === 'GET') {
+    const body = JSON.stringify(dbStars.runStatus());
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Content-Length': Buffer.byteLength(body) });
+    res.end(body);
+    return;
+  }
   if (pathname === '/api/autotag/tags' && req.method === 'GET') {
     const body = JSON.stringify(dbStars.loadTagsConfig());
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Content-Length': Buffer.byteLength(body) });
     res.end(body);
     return;
   }
-  if (pathname === '/api/autotag/feedback' || pathname === '/api/autotag/tags') {
+  if (pathname === '/api/autotag/feedback' || pathname === '/api/autotag/tags' || pathname === '/api/autotag/run' || pathname === '/api/autotag/schedule') {
     if (req.method !== 'POST') { res.writeHead(405); res.end('Method not allowed'); return; }
     const sendJson = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
     const origin = req.headers['origin'];
@@ -127,6 +133,7 @@ http.createServer((req, res) => {
     if (!/^application\/json/i.test(req.headers['content-type'] || '')) return sendJson(415, { error: 'JSON required' });
     const isTags = pathname === '/api/autotag/tags';
     const max = isTags ? 16384 : 4096;
+    const which = pathname.slice('/api/autotag/'.length);
     let size = 0, chunks = [], tooBig = false;
     req.on('data', c => { size += c.length; if (size > max) tooBig = true; else chunks.push(c); });
     req.on('end', () => {
@@ -136,7 +143,9 @@ http.createServer((req, res) => {
       if (!d || typeof d !== 'object' || Array.isArray(d)) return sendJson(400, { error: 'Invalid JSON' });
       let r;
       try {
-        r = isTags
+        r = which === 'run' ? dbStars.requestRun()
+          : which === 'schedule' ? dbStars.saveSchedule(d)
+          : isTags
           ? dbStars.saveTagsConfig(d.enabled)
           : dbStars.recordFeedback(
               typeof d.tag === 'string' ? d.tag.toLowerCase() : '',
