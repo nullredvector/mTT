@@ -78,7 +78,8 @@ function loadFeedback() {
 function loadAutotag(tag) {
   if (typeof tag !== 'string' || !TAG_RE.test(tag)) return { error: 'bad tag' };
   const sugg = readJson(AUTOTAG_FILE);
-  const tags = sugg ? Object.keys(sugg).filter(k => k[0] !== '_' && Array.isArray(sugg[k])) : [];
+  const weak = k => !!(sugg && sugg._meta && sugg._meta.metrics && sugg._meta.metrics[k] && sugg._meta.metrics[k].gate === 'weak');
+  const tags = sugg ? Object.keys(sugg).filter(k => k[0] !== '_' && Array.isArray(sugg[k]) && !weak(k)) : [];
   const fb = loadFeedback()[tag] || { accepted: [], rejected: [], unsure: [] };
   const decided = new Set([...fb.accepted, ...fb.rejected, ...fb.unsure]);
   const list = (sugg && Array.isArray(sugg[tag])) ? sugg[tag] : [];
