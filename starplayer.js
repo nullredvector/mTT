@@ -5567,12 +5567,37 @@ render();
     };
     cb.addEventListener('change', saveSched); hour.addEventListener('change', saveSched);
     sched.append(cb, lab, hour, msg);
+    const notif = document.createElement('div');
+    notif.className = 'at-run-sched';
+    const notifText = document.createElement('span');
+    const notifBtn = document.createElement('button');
+    notifBtn.className = 'at-mode'; notifBtn.textContent = 'Send test';
+    const notifMsg = document.createElement('span'); notifMsg.className = 'at-note';
+    notifBtn.addEventListener('click', async () => {
+      notifBtn.disabled = true; notifMsg.textContent = 'Sending…';
+      const before = atRun && atRun.notifyTest ? atRun.notifyTest.id : null;
+      try {
+        const r = await fetch('/api/autotag/notify-test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        if (!r.ok) throw new Error(r.status);
+        for (let i = 0; i < 12; i++) {                         // the worker answers within a few seconds
+          await new Promise(res => setTimeout(res, 1500));
+          await atPollRun();
+          if (atRun && atRun.notifyTest && atRun.notifyTest.id !== before) { notifMsg.textContent = atRun.notifyTest.ok ? 'Sent. Check your phone.' : 'The server rejected it.'; break; }
+          if (i === 11) notifMsg.textContent = 'No answer from the worker.';
+        }
+      } catch (_) { notifMsg.textContent = 'Could not request a test.'; }
+      notifBtn.disabled = false;
+    });
+    notif.append(notifText, notifBtn, notifMsg);
     const close = document.createElement('button');
     close.className = 'at-mode'; close.textContent = 'Close';
     close.addEventListener('click', () => panel.remove());
     let schedLoaded = false;
     panel._render = () => {
       status.textContent = atStateText(atRun);
+      const nOn = !!(atRun && atRun.notifications);
+      notifText.textContent = nOn ? 'Phone notifications: on' : 'Phone notifications: off (set NTFY_URL on the worker)';
+      notifBtn.style.display = nOn ? '' : 'none';
       run.disabled = !atRun || !atRun.workerOnline || atRun.state !== 'idle';
       if (atRun && !schedLoaded) { cb.checked = atRun.schedule.enabled; hour.value = String(atRun.schedule.hour); schedLoaded = true; }
       results.innerHTML = '';
@@ -5590,7 +5615,7 @@ render();
     const foot = document.createElement('div');
     foot.className = 'at-picker-foot';
     foot.append(run, close);
-    panel.append(h, status, foot, results, sched);
+    panel.append(h, status, foot, results, sched, notif);
     autotagViewEl.appendChild(panel);
     panel._render();
     atPollRun();

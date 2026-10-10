@@ -220,6 +220,7 @@ const REQUEST_FILE = path.join(AT_DIR, 'run_request.json');
 const STATUS_FILE  = path.join(AT_DIR, 'status.json');
 const SCHEDULE_FILE = path.join(AT_DIR, 'schedule.json');
 const HEARTBEAT_FILE = path.join(AT_DIR, 'heartbeat.json');
+const NOTIFY_TEST_FILE = path.join(AT_DIR, 'notify_test.json');
 const WORKER_ALIVE_S = 45;
 const MIN_REQUEST_GAP_S = 30;
 
@@ -235,6 +236,8 @@ function runStatus() {
     phase: st.phase || null, detail: st.detail || '', error: st.error || null,
     reason: st.reason || null, started: st.started || null, finished: st.finished || null, lastOk: st.last_ok || null,
     result: st.result || null,
+    notifications: st.notifications === true,
+    notifyTest: st.notify_test && typeof st.notify_test === 'object' ? { ok: st.notify_test.ok === true, ts: st.notify_test.ts || null, id: st.notify_test.id || null } : null,
     schedule: { enabled: sc.enabled === true, hour: Number.isInteger(sc.hour) && sc.hour >= 0 && sc.hour <= 23 ? sc.hour : 3 },
   };
 }
@@ -250,10 +253,21 @@ function requestRun() {
   return { code: 200, ok: true };
 }
 
+function requestNotifyTest() {
+  const s = runStatus();
+  if (!s.workerOnline) return { code: 503, error: 'worker offline' };
+  if (!s.notifications) return { code: 409, error: 'notifications are off' };
+  const prev = readJson(NOTIFY_TEST_FILE);
+  if (prev && typeof prev.ts === 'number' && Date.now() / 1000 - prev.ts < 10) return { code: 429, error: 'too soon' };
+  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+  try { writeOwnerOnly(NOTIFY_TEST_FILE, { id, ts: Date.now() / 1000 }); } catch (_) { return { code: 500, error: 'could not save' }; }
+  return { code: 200, ok: true, id };
+}
+
 function saveSchedule(d) {
   if (!d || typeof d.enabled !== 'boolean' || !Number.isInteger(d.hour) || d.hour < 0 || d.hour > 23) return { code: 400, error: 'bad schedule' };
   try { writeOwnerOnly(SCHEDULE_FILE, { enabled: d.enabled, hour: d.hour }); } catch (_) { return { code: 500, error: 'could not save' }; }
   return { code: 200, ok: true };
 }
 
-module.exports = { load, save, loadSessions, saveSessions, loadAutotag, recordFeedback, loadAiTags, loadTagsConfig, saveTagsConfig, loadWatch, mergeWatch, runStatus, requestRun, saveSchedule };
+module.exports = { load, save, loadSessions, saveSessions, loadAutotag, recordFeedback, loadAiTags, loadTagsConfig, saveTagsConfig, loadWatch, mergeWatch, runStatus, requestRun, saveSchedule, requestNotifyTest };
