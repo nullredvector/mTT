@@ -1325,7 +1325,7 @@
   // Fill a grid in chunks as the user scrolls instead of building every card at once.
   // A category can hold tens of thousands of videos; makeCard(item, index) is only called for
   // the ones that get near the viewport.
-  const GRID_CHUNK = 60;
+  const GRID_CHUNK = window.innerWidth < 768 ? 24 : 60;   // phones: fewer decoded covers at a time
   function fillGrid(grid, items, makeCard) {
     let next = 0;
     const sentinel = document.createElement('div');
@@ -2376,6 +2376,36 @@
     }
   }
 
+  // ── Crash breadcrumbs ─────────────────────────────────────────────────────
+  // A page iOS kills for memory leaves no error. The last steps are kept in localStorage, and if the
+  // previous visit never said goodbye (hidden/unloaded) a banner shows them on the next load.
+  function spTrace(msg) {
+    try {
+      const t = JSON.parse(localStorage.getItem('sp_trace') || '[]');
+      t.push(new Date().toISOString().slice(11, 23) + ' ' + msg);
+      while (t.length > 40) t.shift();
+      localStorage.setItem('sp_trace', JSON.stringify(t));
+    } catch (_) {}
+  }
+  function setupCrashWatch() {
+    let was = false;
+    try { was = localStorage.getItem('sp_alive') === '1'; localStorage.setItem('sp_alive', '1'); } catch (_) {}
+    const alive = v => { try { localStorage.setItem('sp_alive', v ? '1' : '0'); } catch (_) {} };
+    document.addEventListener('visibilitychange', () => { alive(document.visibilityState === 'visible'); spTrace('vis ' + document.visibilityState); });
+    window.addEventListener('pagehide', () => { alive(false); spTrace('pagehide'); });
+    window.addEventListener('error', e => spTrace('ERR ' + e.message + ' @' + (e.lineno || '')));
+    window.addEventListener('unhandledrejection', e => spTrace('REJ ' + String(e.reason).slice(0, 120)));
+    if (!was) return;
+    let t = [];
+    try { t = JSON.parse(localStorage.getItem('sp_trace') || '[]'); } catch (_) {}
+    const box = document.createElement('div');
+    box.id = 'sp-crash';
+    box.innerHTML = '<b>The page reloaded unexpectedly.</b> Last steps:<pre></pre><button>Dismiss</button>';
+    box.querySelector('pre').textContent = t.slice(-14).join('\n') || '(nothing recorded)';
+    box.querySelector('button').addEventListener('click', () => box.remove());
+    document.body.appendChild(box);
+  }
+
   // Let the page draw under the notch/status bar (viewport-fit=cover) and, when added to the Home Screen,
   // use a translucent status bar so the video runs edge to edge.
   function setupPhoneChrome() {
@@ -2392,6 +2422,7 @@
     meta('mobile-web-app-capable', 'yes');
     meta('apple-mobile-web-app-status-bar-style', 'black-translucent');
     meta('theme-color', '#000000');
+    setupCrashWatch();
   }
 
   function createMobileNav() {
@@ -2554,7 +2585,8 @@
   function swipeBackFromAuthor() {
     const id = activeAuthorId;
     if (!authorViewEl || !id) return;
-    settleAuthorTo(window.innerWidth || 1, () => closeAuthorTab(id));
+    spTrace('swipe back');
+    settleAuthorTo(window.innerWidth || 1, () => { spTrace('settled'); closeAuthorTab(id); spTrace('closed'); });
   }
 
   function setupMobileSwipe() {
@@ -2603,7 +2635,9 @@
           const id = _dbCache && name ? authorIdForName(name) : null;
           if (!id) return;
           _pull = { id, wasOpen: openAuthors.some(a => a.id === id) };
+          spTrace('pull start');
           showAuthorTab(id, name);
+          spTrace('pull shown');
         }
         _swiping = true; lockFeed(true); if (e.cancelable) e.preventDefault();
         dragAuthorTo(Math.max(0, Math.min(W, W + dx)));
@@ -2621,7 +2655,8 @@
       hideSwipeHint();
       if (_ctx === 'none') return;
       const W = window.innerWidth || 1;
-      const vel = dx / Math.max(1, Date.now() - _tt);   // px per ms; fast flicks commit even when short
+      const vel = dx / Math.max(1, Date.now() - _tt);
+      spTrace('touch end ' + _ctx + ' dx=' + Math.round(dx));   // px per ms; fast flicks commit even when short
       if (_ctx === 'author') {
         if (!_swiping) return;
         if (dx > W * 0.3 || (dx > 40 && vel > 0.5)) swipeBackFromAuthor();
@@ -4452,9 +4487,13 @@ render();
     if (authorViewEl) authorViewEl.style.display = 'none';
     document.body.classList.remove('sp-author-open');
     navPopQuiet('author');
+    spTrace('hide author');
+    // Free the page's thumbnails (the page is rebuilt every time it opens) before the feed starts decoding video again
+    if (isMobilePlayer() && authorViewEl) authorViewEl.textContent = '';
     syncAuthorTabs();
     // A video opened from this page replaced the Home feed; rebuild it for the tab underneath
     if (isMobilePlayer() && activeMobileTab === 'home' && !playerOpen) openPlayer();
+    spTrace('resume feed');
     if (resumePlayback && isMobilePlayer() && playerOpen && playerViewEl && playerViewEl.style.display !== 'none') {
       playerViewEl.querySelectorAll('video')[(playerColumnOffsets[0] || 0) - playerWinStart]?.play().catch(() => {});
     }
@@ -6668,6 +6707,10 @@ render();
         #star-panel-grid { grid-template-columns: repeat(2, 1fr); }
       }
 
+      #sp-crash { position: fixed; left: 8px; right: 8px; top: calc(env(safe-area-inset-top, 0px) + 8px); z-index: 99999;
+        background: #3a1010; color: #fff; border: 1px solid #a33; border-radius: 10px; padding: 10px 12px; font-size: 12px; }
+      #sp-crash pre { margin: 6px 0; max-height: 40vh; overflow: auto; font: 10px/1.35 monospace; white-space: pre-wrap; color: #fcc; }
+      #sp-crash button { background: #fff; color: #000; border: none; border-radius: 8px; padding: 6px 14px; font-weight: 700; }
       /* ═══ PHONE UI v2: edge-to-edge feed, white icon buttons, seek bar above the tab bar ═══ */
       .sp-seek { display: none; }
       @media (max-width: 768px) {
