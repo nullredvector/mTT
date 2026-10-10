@@ -2547,20 +2547,32 @@
   // x = innerWidth: top view fully off to the right; x = 0: fully covering the screen.
   function dragPair(top, under, x) {
     const W = window.innerWidth || 1;
-    if (top) { top.style.transition = 'none'; top.style.transform = `translateX(${x}px)`; }
+    if (top) { top._spx = x; top.style.transition = 'none'; top.style.transform = `translateX(${x}px)`; }
     if (under) { under.style.transition = 'none'; under.style.transform = `translateX(${-(W - x) * 0.3}px)`; }
   }
 
-  // Finish a drag: glide to x, then tidy up the inline styles and call done
+  // Finish a drag: glide to x with per-frame transforms (the same thing the drag itself does; a CSS transition
+  // on these two full-screen layers made some phones drop the page), then tidy up and call done
   function settlePair(top, under, x, done) {
     const W = window.innerWidth || 1;
-    const ease = 'transform 0.26s cubic-bezier(.2,.8,.2,1)';
-    if (top) { top.style.transition = ease; top.style.transform = `translateX(${x}px)`; }
-    if (under) { under.style.transition = ease; under.style.transform = `translateX(${-(W - x) * 0.3}px)`; }
-    setTimeout(() => {
+    const x0 = top && top._spx != null ? top._spx : (x === 0 ? W : 0);
+    const t0 = performance.now(), dur = 240;
+    let over = false;
+    const finish = () => {
+      if (over) return;
+      over = true;
       [top, under].forEach(n => { if (n) { n.style.transition = ''; n.style.transform = ''; } });
+      if (top) top._spx = null;
       if (done) done();
-    }, 270);
+    };
+    const frame = now => {
+      if (over) return;
+      const k = Math.min(1, (now - t0) / dur);
+      dragPair(top, under, x0 + (x - x0) * (1 - Math.pow(1 - k, 3)));
+      if (k < 1) requestAnimationFrame(frame); else finish();
+    };
+    requestAnimationFrame(frame);
+    setTimeout(finish, dur + 150);   // frames can stall (hidden tab); never leave the page half-way
   }
 
   function dragAuthorTo(x) { dragPair(authorViewEl, getSwipeViewEl(), x); }
@@ -6733,8 +6745,7 @@ render();
         #player-view { bottom: var(--sp-nav-h) !important; background: #000; }
         #author-view, #autotag-view, #recents-grid-view { bottom: var(--sp-nav-h) !important; padding-top: var(--sp-top); box-sizing: border-box; }
         #stars-view { bottom: var(--sp-nav-h) !important; padding-top: var(--sp-top) !important; box-sizing: border-box; }
-        #author-view { box-shadow: -10px 0 28px rgba(0,0,0,.55); will-change: transform; }
-        #player-view { will-change: transform; }
+        #author-view { border-left: 1px solid rgba(255,255,255,.08); }
 
         /* video fills the screen; only landscape clips letterbox */
         #player-feed { background: #000; }
