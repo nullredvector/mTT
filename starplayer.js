@@ -2595,7 +2595,6 @@
     if (endFeedVisit) endFeedVisit();
     el.querySelectorAll('video').forEach(v => v.pause());
     homeStash = { el, list: playerVideoList, offsets: playerColumnOffsets, win: playerWinStart, endVisit: endFeedVisit, feedEl };
-    el.id = 'player-view-parked';
     el.style.visibility = 'hidden';
     el.style.pointerEvents = 'none';
     playerViewEl = null;
@@ -2606,7 +2605,6 @@
     homeStash = null;
     if (playerViewEl && playerViewEl !== h.el) playerViewEl.remove();
     playerViewEl = h.el;
-    h.el.id = 'player-view';
     h.el.style.visibility = '';
     h.el.style.pointerEvents = '';
     h.el.style.zIndex = '';
@@ -2631,7 +2629,7 @@
 
   // While a sideways pull is under way the feed must not scroll up or down
   function lockFeed(on) {
-    const f = document.getElementById('player-feed');
+    const f = playerViewEl && playerViewEl.querySelector('#player-feed');   // the visible player, not a parked one
     if (f) f.style.overflowY = on ? 'hidden' : '';
   }
 
